@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+
+system/logs/
+system/users/users.db
+system/backups/
+
+.lynaos/
+
+music/
+downloads/
+
+.env
+*.tmp
+*.swp

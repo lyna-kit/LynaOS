@@ -1,0 +1,18 @@
+{
+    "0.2.0": {
+        "codename": "Polaris",
+        "channel": "dev",
+        "build": 1,
+        "changes": [
+            "Integración del sistema de aplicaciones",
+            "LynaCalc integrada",
+            "LynaFiles integrada",
+            "LynaSettings integrada",
+            "LynaStore integrada",
+            "LynaFM integrada",
+            "Shelly integrada",
+            "LynaBash integrado con las aplicaciones",
+            "Sistema inicial de versiones"
+        ]
+    }
+}
