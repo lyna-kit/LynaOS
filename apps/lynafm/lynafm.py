@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 
+import json
 import os
 import shutil
-import signal
+import socket
 import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 
 APP_NAME = "LynaFM"
-APP_VERSION = "0.2"
+APP_VERSION = "0.3"
 
 LYNAOS_ROOT = Path(__file__).resolve().parents[2]
 MUSIC_DIR = LYNAOS_ROOT / "music"
 
 playlist = []
 current_index = -1
+
 player = None
+ipc_socket = None
 playing = False
 
 
@@ -45,19 +50,25 @@ def check_dependencies():
         )
 
         print()
-        print(
-            "Puedes instalarlas con:"
-        )
-        print(
-            "pkg install mpv"
-        )
-        print(
-            "pip install yt-dlp"
-        )
+        print("Instala las dependencias con:")
+
+        if "mpv" in missing:
+            print("pkg install mpv")
+
+        if "yt-dlp" in missing:
+            print("python -m pip install -U yt-dlp")
 
         return False
 
     return True
+
+
+def create_ipc_path():
+
+    return str(
+        Path(tempfile.gettempdir())
+        / "lynafm-mpv.sock"
+    )
 
 
 # ============================================================
@@ -72,17 +83,19 @@ def banner():
 ║          Música de LynaOS           ║
 ╚══════════════════════════════════════╝
 
-L = Escuchar
-D = Descargar
-P = Play / Pause
-← = Retroceder
-→ = Adelantar
-N = Siguiente
-B = Anterior
-LIST = Lista
-ADD = Añadir
-H = Ayuda
-Q = Salir
+L <número> = Escuchar
+D <número> = Descargar
+P          = Play / Pause
+←          = Retroceder 10 segundos
+→          = Adelantar 10 segundos
+N          = Siguiente
+B          = Anterior
+LIST       = Lista
+ADD        = Añadir enlace de YouTube
+H          = Ayuda
+ABOUT      = Información
+CLEAR      = Limpiar pantalla
+Q          = Salir
 """)
 
 
@@ -93,7 +106,7 @@ Q = Salir
 def help_command():
 
     print("""
-LynaFM 0.2
+LynaFM 0.3
 
 Comandos:
 
@@ -116,20 +129,90 @@ Ejemplos:
   ADD
   LIST
   L 1
-  D 1
+  P
+  →
+  ←
   N
   B
+  D 1
 """)
 
 
 # ============================================================
-#                     DETENER REPRODUCTOR
+#                       IPC DE MPV
+# ============================================================
+
+def send_mpv(command):
+
+    global ipc_socket
+
+    if ipc_socket is None:
+        return False
+
+    try:
+
+        message = json.dumps({
+            "command": command
+        }) + "\n"
+
+        ipc_socket.sendall(
+            message.encode("utf-8")
+        )
+
+        return True
+
+    except Exception:
+
+        return False
+
+
+def connect_ipc():
+
+    global ipc_socket
+
+    if ipc_socket is None:
+        return False
+
+    for _ in range(20):
+
+        try:
+
+            sock = socket.socket(
+                socket.AF_UNIX,
+                socket.SOCK_STREAM
+            )
+
+            sock.connect(ipc_socket)
+
+            ipc_socket = sock
+
+            return True
+
+        except Exception:
+
+            time.sleep(0.1)
+
+    return False
+
+
+# ============================================================
+#                    DETENER REPRODUCTOR
 # ============================================================
 
 def stop_player():
 
     global player
+    global ipc_socket
     global playing
+
+    if ipc_socket is not None:
+
+        try:
+            ipc_socket.close()
+        except Exception:
+            pass
+
+    ipc_socket = None
 
     if player is not None:
 
@@ -151,6 +234,93 @@ def stop_player():
 
 
 # ============================================================
+#                     OBTENER AUDIO
+# ============================================================
+
+def get_audio_url(url):
+
+    print(
+        "Obteniendo flujo de audio..."
+    )
+
+    try:
+
+        result = subprocess.run(
+            [
+                "yt-dlp",
+                "--no-playlist",
+                "-f",
+                "bestaudio/best",
+                "-g",
+                url
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+    except subprocess.TimeoutExpired:
+
+        print(
+            "✗ Tiempo de espera agotado."
+        )
+
+        return None
+
+    except Exception as error:
+
+        print(
+            f"✗ Error ejecutando yt-dlp: {error}"
+        )
+
+        return None
+
+    if result.returncode != 0:
+
+        error = result.stderr.strip()
+
+        print(
+            "✗ yt-dlp no pudo obtener "
+            "el audio."
+        )
+
+        if "403" in error:
+
+            print()
+            print(
+                "HTTP 403: el servidor rechazó "
+                "la solicitud."
+            )
+
+            print(
+                "Actualiza yt-dlp:"
+            )
+
+            print(
+                "python -m pip install -U yt-dlp"
+            )
+
+        else:
+
+            if error:
+                print(error)
+
+        return None
+
+    audio_url = result.stdout.strip()
+
+    if not audio_url:
+
+        print(
+            "✗ No se obtuvo ningún flujo."
+        )
+
+        return None
+
+    return audio_url
+
+
+# ============================================================
 #                         REPRODUCIR
 # ============================================================
 
@@ -158,6 +328,7 @@ def play_song(index):
 
     global current_index
     global player
+    global ipc_socket
     global playing
 
     if not playlist:
@@ -192,6 +363,25 @@ def play_song(index):
     )
     print()
 
+    audio_url = get_audio_url(url)
+
+    if not audio_url:
+
+        return
+
+    socket_path = create_ipc_path()
+
+    try:
+
+        if os.path.exists(socket_path):
+
+            os.remove(socket_path)
+
+    except Exception:
+        pass
+
+    ipc_socket = socket_path
+
     try:
 
         player = subprocess.Popen(
@@ -199,18 +389,76 @@ def play_song(index):
                 "mpv",
                 "--no-video",
                 "--force-window=no",
-                "--input-ipc-client=no",
-                url
+                "--idle=no",
+                f"--input-ipc-server={socket_path}",
+                audio_url
             ]
         )
-
-        playing = True
 
     except Exception as error:
 
         print(
-            f"LynaFM: error: {error}"
+            f"LynaFM: error iniciando mpv: {error}"
         )
+
+        ipc_socket = None
+        player = None
+
+        return
+
+    # Esperar a que mpv cree el socket.
+
+    socket_path_value = socket_path
+
+    ipc_socket = None
+
+    for _ in range(30):
+
+        if os.path.exists(
+            socket_path_value
+        ):
+
+            break
+
+        time.sleep(0.1)
+
+    if not os.path.exists(
+        socket_path_value
+    ):
+
+        print(
+            "✗ No se pudo iniciar el "
+            "control de mpv."
+        )
+
+        stop_player()
+
+        return
+
+    try:
+
+        sock = socket.socket(
+            socket.AF_UNIX,
+            socket.SOCK_STREAM
+        )
+
+        sock.connect(
+            socket_path_value
+        )
+
+        ipc_socket = sock
+
+    except Exception as error:
+
+        print(
+            f"✗ Error conectando con mpv: {error}"
+        )
+
+        stop_player()
+
+        return
+
+    playing = True
 
 
 # ============================================================
@@ -239,32 +487,22 @@ def toggle_play():
 
         return
 
-    try:
+    if send_mpv([
+        "cycle",
+        "pause"
+    ]):
+
+        playing = not playing
 
         if playing:
-
-            player.send_signal(
-                signal.SIGSTOP
-            )
-
-            playing = False
-
+            print("▶ Reproduciendo.")
+        else:
             print("⏸ Pausado.")
 
-        else:
-
-            player.send_signal(
-                signal.SIGCONT
-            )
-
-            playing = True
-
-            print("▶ Reproduciendo.")
-
-    except Exception as error:
+    else:
 
         print(
-            f"LynaFM: {error}"
+            "✗ No se pudo controlar mpv."
         )
 
 
@@ -282,16 +520,21 @@ def forward():
 
         return
 
-    print(
-        "→ Adelantar 10 segundos."
-    )
+    if send_mpv([
+        "seek",
+        10,
+        "relative"
+    ]):
 
-    # Reiniciar la reproducción con mpv
-    # usando su control de entrada no es
-    # posible mediante stdin en este modo.
-    #
-    # Se deja preparado para la siguiente
-    # versión del reproductor.
+        print(
+            "→ +10 segundos."
+        )
+
+    else:
+
+        print(
+            "✗ No se pudo adelantar."
+        )
 
 
 # ============================================================
@@ -308,9 +551,21 @@ def backward():
 
         return
 
-    print(
-        "← Retroceder 10 segundos."
-    )
+    if send_mpv([
+        "seek",
+        -10,
+        "relative"
+    ]):
+
+        print(
+            "← -10 segundos."
+        )
+
+    else:
+
+        print(
+            "✗ No se pudo retroceder."
+        )
 
 
 # ============================================================
@@ -320,6 +575,10 @@ def backward():
 def next_song():
 
     if not playlist:
+
+        print(
+            "LynaFM: la lista está vacía."
+        )
 
         return
 
@@ -343,6 +602,10 @@ def next_song():
 def previous_song():
 
     if not playlist:
+
+        print(
+            "LynaFM: la lista está vacía."
+        )
 
         return
 
@@ -396,7 +659,7 @@ def show_list():
 
 
 # ============================================================
-#                        AÑADIR
+#                           AÑADIR
 # ============================================================
 
 def add_song():
@@ -470,7 +733,7 @@ def download_song(index):
         )
 
         print(
-            "pip install yt-dlp"
+            "python -m pip install -U yt-dlp"
         )
 
         return
@@ -493,9 +756,10 @@ def download_song(index):
 
     try:
 
-        subprocess.run(
+        result = subprocess.run(
             [
                 "yt-dlp",
+                "--no-playlist",
                 "-x",
                 "--audio-format",
                 "mp3",
@@ -506,10 +770,19 @@ def download_song(index):
             check=False
         )
 
-        print()
-        print(
-            f"✓ Guardado en: {MUSIC_DIR}"
-        )
+        if result.returncode == 0:
+
+            print()
+            print(
+                f"✓ Guardado en: {MUSIC_DIR}"
+            )
+
+        else:
+
+            print()
+            print(
+                "✗ La descarga no se pudo completar."
+            )
 
     except Exception as error:
 
@@ -532,11 +805,16 @@ Reproductor musical de LynaOS.
 Fuente:
   YouTube
 
+Motor:
+  mpv + yt-dlp
+
 Funciones:
   • Reproducción
   • Descarga de audio
   • Playlist
   • Play / Pause
+  • Adelantar
+  • Retroceder
   • Siguiente / Anterior
 
 Música descargada:

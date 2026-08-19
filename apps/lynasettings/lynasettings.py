@@ -1,282 +1,290 @@
 #!/usr/bin/env python3
 
-import json
 import os
+import platform
+import sys
 from pathlib import Path
 
 
 APP_NAME = "LynaSettings"
-APP_VERSION = "0.1"
+APP_VERSION = "0.3"
 
-LYNAOS_DIR = Path.home() / ".lynaos"
-CONFIG_FILE = LYNAOS_DIR / "config.json"
+LYNAOS_ROOT = Path(__file__).resolve().parents[2]
+CONFIG_DIR = LYNAOS_ROOT / "etc"
+CONFIG_FILE = CONFIG_DIR / "lyna.conf"
 
 
 # ============================================================
-#                         CONFIGURACIÓN
+#                         BANNER
+# ============================================================
+
+def banner():
+
+    print("""
+╔══════════════════════════════════════╗
+║        LynaSettings 0.3              ║
+║       Configuración de LynaOS        ║
+╚══════════════════════════════════════╝
+""")
+
+
+# ============================================================
+#                           AYUDA
+# ============================================================
+
+def help_command():
+
+    print("""
+LynaSettings 0.3
+
+Comandos:
+
+  INFO       Información del sistema
+  CONFIG     Mostrar configuración
+  SET        Cambiar una configuración
+  RESET      Restaurar configuración
+  PATH       Mostrar rutas de LynaOS
+  CLEAR      Limpiar pantalla
+  ABOUT      Información de LynaSettings
+  H          Ayuda
+  Q          Salir
+
+Ejemplos:
+
+  INFO
+  CONFIG
+  SET username Lyna
+  PATH
+""")
+
+
+# ============================================================
+#                    CONFIGURACIÓN PREDETERMINADA
 # ============================================================
 
 DEFAULT_CONFIG = {
-    "name": "LynaOS",
-    "version": "0.1",
-    "user": "lyna",
-    "hostname": "lynaos",
-    "theme": "default",
+    "username": "user",
     "language": "es",
-    "music": True,
-    "notifications": True
+    "theme": "default",
+    "music_dir": "music",
 }
 
 
+# ============================================================
+#                    LEER CONFIGURACIÓN
+# ============================================================
+
 def load_config():
 
-    LYNAOS_DIR.mkdir(
+    CONFIG_DIR.mkdir(
         parents=True,
         exist_ok=True
     )
 
+    config = DEFAULT_CONFIG.copy()
+
     if not CONFIG_FILE.exists():
 
-        save_config(DEFAULT_CONFIG.copy())
+        save_config(config)
+
+        return config
 
     try:
 
-        with open(
-            CONFIG_FILE,
+        with CONFIG_FILE.open(
             "r",
             encoding="utf-8"
         ) as file:
 
-            return json.load(file)
+            for line in file:
 
-    except Exception:
+                line = line.strip()
 
-        return DEFAULT_CONFIG.copy()
+                if not line:
+                    continue
 
+                if line.startswith("#"):
+                    continue
+
+                if "=" not in line:
+                    continue
+
+                key, value = line.split(
+                    "=",
+                    1
+                )
+
+                key = key.strip()
+                value = value.strip()
+
+                if key:
+
+                    config[key] = value
+
+    except Exception as error:
+
+        print(
+            f"Error leyendo configuración: {error}"
+        )
+
+    return config
+
+
+# ============================================================
+#                   GUARDAR CONFIGURACIÓN
+# ============================================================
 
 def save_config(config):
 
-    LYNAOS_DIR.mkdir(
+    CONFIG_DIR.mkdir(
         parents=True,
         exist_ok=True
     )
 
-    with open(
-        CONFIG_FILE,
-        "w",
-        encoding="utf-8"
-    ) as file:
+    try:
 
-        json.dump(
-            config,
-            file,
-            indent=4,
-            ensure_ascii=False
+        with CONFIG_FILE.open(
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            file.write(
+                "# LynaOS configuration\n"
+            )
+
+            for key, value in config.items():
+
+                file.write(
+                    f"{key}={value}\n"
+                )
+
+        return True
+
+    except Exception as error:
+
+        print(
+            f"Error guardando configuración: {error}"
         )
 
-
-# ============================================================
-#                            ABOUT
-# ============================================================
-
-def about():
-
-    print(f"""
-{APP_NAME} {APP_VERSION}
-
-Centro de configuración de LynaOS.
-
-Sistema: LynaOS
-Versión: {APP_VERSION}
-""")
+        return False
 
 
 # ============================================================
-#                       MOSTRAR AJUSTES
+#                    INFORMACIÓN DEL SISTEMA
 # ============================================================
 
-def show_settings():
-
-    config = load_config()
+def system_info():
 
     print("""
 ╔══════════════════════════════════════╗
-║          AJUSTES DE LynaOS           ║
+║          Información del sistema     ║
 ╚══════════════════════════════════════╝
 """)
 
     print(
-        f"1. Nombre       : {config.get('name')}"
+        f"Sistema:       {platform.system()}"
     )
 
     print(
-        f"2. Usuario      : {config.get('user')}"
+        f"Plataforma:    {platform.platform()}"
     )
 
     print(
-        f"3. Hostname     : {config.get('hostname')}"
+        f"Arquitectura:  {platform.machine()}"
     )
 
     print(
-        f"4. Tema         : {config.get('theme')}"
+        f"Python:        {platform.python_version()}"
     )
 
     print(
-        f"5. Idioma       : {config.get('language')}"
+        f"LynaOS:        0.3"
     )
 
     print(
-        f"6. Música       : {'Activada' if config.get('music') else 'Desactivada'}"
+        f"Directorio:    {LYNAOS_ROOT}"
     )
 
     print(
-        f"7. Notificaciones: {'Activadas' if config.get('notifications') else 'Desactivadas'}"
+        f"Configuración: {CONFIG_FILE}"
     )
 
 
 # ============================================================
-#                        CAMBIAR VALOR
+#                       MOSTRAR CONFIG
 # ============================================================
 
-def change_setting():
+def show_config(config):
 
-    config = load_config()
+    print("""
+╔══════════════════════════════════════╗
+║           Configuración              ║
+╚══════════════════════════════════════╝
+""")
 
-    show_settings()
-
-    print()
-    print("Escribe el número del ajuste.")
-    print("Escribe 'cancel' para cancelar.")
-
-    choice = input(
-        "Ajuste> "
-    ).strip()
-
-    if choice == "cancel":
-
-        return
-
-    if choice == "1":
-
-        value = input(
-            "Nuevo nombre de LynaOS: "
-        ).strip()
-
-        if value:
-            config["name"] = value
-
-    elif choice == "2":
-
-        value = input(
-            "Nuevo usuario: "
-        ).strip()
-
-        if value:
-            config["user"] = value
-
-    elif choice == "3":
-
-        value = input(
-            "Nuevo hostname: "
-        ).strip()
-
-        if value:
-            config["hostname"] = value
-
-    elif choice == "4":
-
-        print()
-        print("Temas disponibles:")
-        print("  default")
-        print("  dark")
-        print("  light")
-
-        value = input(
-            "Tema> "
-        ).strip().lower()
-
-        if value in (
-            "default",
-            "dark",
-            "light"
-        ):
-
-            config["theme"] = value
-
-        else:
-
-            print(
-                "Tema no válido."
-            )
-
-            return
-
-    elif choice == "5":
-
-        print()
-        print("Idiomas disponibles:")
-        print("  es")
-        print("  en")
-
-        value = input(
-            "Idioma> "
-        ).strip().lower()
-
-        if value in (
-            "es",
-            "en"
-        ):
-
-            config["language"] = value
-
-        else:
-
-            print(
-                "Idioma no válido."
-            )
-
-            return
-
-    elif choice == "6":
-
-        config["music"] = not config.get(
-            "music",
-            True
-        )
-
-    elif choice == "7":
-
-        config["notifications"] = not config.get(
-            "notifications",
-            True
-        )
-
-    else:
+    for key, value in config.items():
 
         print(
-            "Opción no válida."
+            f"{key:<15} = {value}"
+        )
+
+
+# ============================================================
+#                      CAMBIAR CONFIG
+# ============================================================
+
+def set_config(config, command):
+
+    parts = command.split(
+        None,
+        2
+    )
+
+    if len(parts) < 3:
+
+        print(
+            "Uso: SET <opción> <valor>"
         )
 
         return
 
-    save_config(config)
+    key = parts[1]
+    value = parts[2]
 
-    print(
-        "✓ Ajustes guardados."
-    )
+    if not key:
+
+        print(
+            "Opción inválida."
+        )
+
+        return
+
+    config[key] = value
+
+    if save_config(config):
+
+        print(
+            f"✓ {key} = {value}"
+        )
 
 
 # ============================================================
-#                         RESTABLECER
+#                       RESTABLECER
 # ============================================================
 
-def reset_settings():
+def reset_config(config):
 
-    confirm = input(
-        "¿Restablecer todos los ajustes? [s/N] "
+    confirmation = input(
+        "¿Restaurar configuración? [s/N]: "
     ).strip().lower()
 
-    if confirm != "s":
+    if confirmation not in (
+        "s",
+        "si",
+        "sí",
+        "y",
+        "yes"
+    ):
 
         print(
             "Operación cancelada."
@@ -284,50 +292,94 @@ def reset_settings():
 
         return
 
-    save_config(
-        DEFAULT_CONFIG.copy()
+    config.clear()
+
+    config.update(
+        DEFAULT_CONFIG
+    )
+
+    if save_config(config):
+
+        print(
+            "✓ Configuración restaurada."
+        )
+
+
+# ============================================================
+#                           RUTAS
+# ============================================================
+
+def show_paths():
+
+    print("""
+╔══════════════════════════════════════╗
+║             Rutas LynaOS             ║
+╚══════════════════════════════════════╝
+""")
+
+    print(
+        f"LynaOS:      {LYNAOS_ROOT}"
     )
 
     print(
-        "✓ Ajustes restablecidos."
+        f"Aplicaciones:{LYNAOS_ROOT / 'apps'}"
+    )
+
+    print(
+        f"Sistema:     {LYNAOS_ROOT / 'system'}"
+    )
+
+    print(
+        f"Kernel:      {LYNAOS_ROOT / 'kernel'}"
+    )
+
+    print(
+        f"Boot:        {LYNAOS_ROOT / 'boot'}"
+    )
+
+    print(
+        f"Configuración: {CONFIG_DIR}"
+    )
+
+    print(
+        f"Música:      {LYNAOS_ROOT / 'music'}"
     )
 
 
 # ============================================================
-#                            AYUDA
+#                           ABOUT
 # ============================================================
 
-def help_command():
+def about():
 
-    print("""
-LynaSettings 0.1
+    print(f"""
+{APP_NAME} {APP_VERSION}
 
-Comandos:
+Administrador de configuración
+de LynaOS.
 
-  settings    Ver configuración
-  change      Cambiar configuración
-  reset       Restablecer configuración
-  about       Información
-  clear       Limpiar pantalla
-  help        Ayuda
-  exit        Salir
+Funciones:
+
+  • Información del sistema
+  • Configuración persistente
+  • Rutas del sistema
+  • Restauración de configuración
+
+Archivo:
+
+  {CONFIG_FILE}
 """)
 
 
 # ============================================================
-#                          APLICACIÓN
+#                            APP
 # ============================================================
 
 def run():
 
-    print(f"""
-╔══════════════════════════════════╗
-║       {APP_NAME} {APP_VERSION}       ║
-║       Ajustes de LynaOS         ║
-╚══════════════════════════════════╝
+    config = load_config()
 
-Escribe 'help' para obtener ayuda.
-""")
+    banner()
 
     while True:
 
@@ -335,45 +387,127 @@ Escribe 'help' para obtener ayuda.
 
             command = input(
                 "lynasettings> "
-            ).strip().lower()
-
-            if not command:
-                continue
-
-            if command == "exit":
-                break
-
-            elif command == "help":
-                help_command()
-
-            elif command == "settings":
-                show_settings()
-
-            elif command == "change":
-                change_setting()
-
-            elif command == "reset":
-                reset_settings()
-
-            elif command == "about":
-                about()
-
-            elif command == "clear":
-                os.system("clear")
-
-            else:
-
-                print(
-                    f"LynaSettings: comando desconocido: {command}"
-                )
+            ).strip()
 
         except KeyboardInterrupt:
 
             print()
 
-        except EOFError:
+            print(
+                "Saliendo de LynaSettings..."
+            )
 
             break
+
+        except EOFError:
+
+            print()
+
+            break
+
+        if not command:
+            continue
+
+        upper = command.upper()
+
+        # ----------------------------------------------------
+        # SALIR
+        # ----------------------------------------------------
+
+        if upper in (
+            "Q",
+            "EXIT"
+        ):
+
+            print(
+                "Saliendo de LynaSettings..."
+            )
+
+            break
+
+        # ----------------------------------------------------
+        # AYUDA
+        # ----------------------------------------------------
+
+        elif upper in (
+            "H",
+            "HELP"
+        ):
+
+            help_command()
+
+        # ----------------------------------------------------
+        # INFO
+        # ----------------------------------------------------
+
+        elif upper == "INFO":
+
+            system_info()
+
+        # ----------------------------------------------------
+        # CONFIG
+        # ----------------------------------------------------
+
+        elif upper == "CONFIG":
+
+            show_config(config)
+
+        # ----------------------------------------------------
+        # SET
+        # ----------------------------------------------------
+
+        elif upper.startswith("SET "):
+
+            set_config(
+                config,
+                command
+            )
+
+        # ----------------------------------------------------
+        # RESET
+        # ----------------------------------------------------
+
+        elif upper == "RESET":
+
+            reset_config(config)
+
+        # ----------------------------------------------------
+        # PATH
+        # ----------------------------------------------------
+
+        elif upper == "PATH":
+
+            show_paths()
+
+        # ----------------------------------------------------
+        # CLEAR
+        # ----------------------------------------------------
+
+        elif upper == "CLEAR":
+
+            os.system("clear")
+
+        # ----------------------------------------------------
+        # ABOUT
+        # ----------------------------------------------------
+
+        elif upper == "ABOUT":
+
+            about()
+
+        # ----------------------------------------------------
+        # DESCONOCIDO
+        # ----------------------------------------------------
+
+        else:
+
+            print(
+                "Comando desconocido."
+            )
+
+            print(
+                "Escribe H para ver la ayuda."
+            )
 
 
 # ============================================================

@@ -3,11 +3,10 @@
 import os
 import shutil
 import subprocess
-from pathlib import Path
 
 
 APP_NAME = "LynaStore"
-APP_VERSION = "0.1"
+APP_VERSION = "0.3"
 
 
 # ============================================================
@@ -15,87 +14,228 @@ APP_VERSION = "0.1"
 # ============================================================
 
 def command_exists(command):
+
     return shutil.which(command) is not None
 
 
 def run_command(command):
+
     try:
 
-        result = subprocess.run(
+        subprocess.run(
             command,
-            text=True
+            check=False
         )
-
-        return result.returncode
-
-    except FileNotFoundError:
-
-        print(
-            f"LynaStore: comando no encontrado: {command[0]}"
-        )
-
-        return 127
 
     except KeyboardInterrupt:
 
-        print(
-            "\nOperación cancelada."
-        )
+        print()
+        print("Operación cancelada.")
 
-        return 130
+    except Exception as error:
+
+        print(
+            f"✗ Error: {error}"
+        )
 
 
 # ============================================================
-#                           BANNER
+#                         BANNER
 # ============================================================
 
 def banner():
 
     print("""
 ╔══════════════════════════════════════╗
-║           LynaStore 0.1              ║
-║       Tienda de aplicaciones         ║
-║             LynaOS                   ║
+║           LynaStore 0.3              ║
+║       Gestor de paquetes             ║
 ╚══════════════════════════════════════╝
 
-I = Instalar
-U = Desinstalar
-S = Buscar
-H = Ayuda
-P = Instalar por pkg
-A = Instalar por apt
+Compatible con:
 
-Escribe H para obtener ayuda.
+  • pkg
+  • apt
 """)
 
 
 # ============================================================
-#                            AYUDA
+#                           AYUDA
 # ============================================================
 
 def help_command():
 
     print("""
-LynaStore 0.1
+LynaStore 0.3
 
 Comandos:
 
-  I    Instalar una aplicación
-  U    Desinstalar una aplicación
-  S    Buscar un paquete
-  H    Mostrar ayuda
-  P    Instalar mediante pkg
-  A    Instalar mediante apt
-  Q    Salir
+  I <paquete>       Instalar paquete
+  U <paquete>       Desinstalar paquete
+  S <paquete>       Buscar paquete
+  P <paquete>       Instalar mediante pkg
+  A <paquete>       Instalar mediante apt
+
+  UPDATE            Actualizar índices
+  UPGRADE           Actualizar paquetes
+
+  INFO              Información del sistema
+  H                 Ayuda
+  CLEAR             Limpiar pantalla
+  Q                 Salir
 
 Ejemplos:
 
-  I > python
-  U > python
-  S > python
-  P > python
-  A > curl
+  S python
+  I python
+  P git
+  A curl
+  UPDATE
+  UPGRADE
 """)
+
+
+# ============================================================
+#                         DETECTAR GESTOR
+# ============================================================
+
+def detect_package_manager():
+
+    if command_exists("pkg"):
+
+        return "pkg"
+
+    if command_exists("apt"):
+
+        return "apt"
+
+    return None
+
+
+# ============================================================
+#                          INSTALAR
+# ============================================================
+
+def install_package(package, manager=None):
+
+    if not package:
+
+        print(
+            "✗ Debes indicar un paquete."
+        )
+
+        return
+
+    if manager is None:
+
+        manager = detect_package_manager()
+
+    if manager is None:
+
+        print(
+            "✗ No se encontró pkg ni apt."
+        )
+
+        return
+
+    print()
+    print(
+        f"📦 Instalando {package} con {manager}..."
+    )
+    print()
+
+    if manager == "pkg":
+
+        run_command(
+            [
+                "pkg",
+                "install",
+                "-y",
+                package
+            ]
+        )
+
+    elif manager == "apt":
+
+        run_command(
+            [
+                "apt",
+                "install",
+                "-y",
+                package
+            ]
+        )
+
+
+# ============================================================
+#                        DESINSTALAR
+# ============================================================
+
+def uninstall_package(package):
+
+    if not package:
+
+        print(
+            "✗ Debes indicar un paquete."
+        )
+
+        return
+
+    manager = detect_package_manager()
+
+    if manager is None:
+
+        print(
+            "✗ No se encontró pkg ni apt."
+        )
+
+        return
+
+    print()
+    print(
+        f"⚠ Vas a desinstalar: {package}"
+    )
+
+    confirmation = input(
+        "¿Continuar? [s/N]: "
+    ).strip().lower()
+
+    if confirmation not in (
+        "s",
+        "si",
+        "sí",
+        "y",
+        "yes"
+    ):
+
+        print(
+            "Operación cancelada."
+        )
+
+        return
+
+    print()
+
+    if manager == "pkg":
+
+        run_command(
+            [
+                "pkg",
+                "uninstall",
+                "-y",
+                package
+            ]
+        )
+
+    else:
+
+        run_command(
+            [
+                "apt",
+                "remove",
+                "-y",
+                package
+            ]
+        )
 
 
 # ============================================================
@@ -104,21 +244,31 @@ Ejemplos:
 
 def search_package(package):
 
-    package = package.strip()
-
     if not package:
 
         print(
-            "LynaStore: debes indicar un paquete."
+            "✗ Debes indicar qué buscar."
         )
 
         return
 
-    print(
-        f"\nBuscando '{package}'...\n"
-    )
+    manager = detect_package_manager()
 
-    if command_exists("pkg"):
+    if manager is None:
+
+        print(
+            "✗ No se encontró pkg ni apt."
+        )
+
+        return
+
+    print()
+    print(
+        f"🔎 Buscando: {package}"
+    )
+    print()
+
+    if manager == "pkg":
 
         run_command(
             [
@@ -130,245 +280,148 @@ def search_package(package):
 
     else:
 
-        print(
-            "LynaStore: pkg no está disponible."
+        run_command(
+            [
+                "apt-cache",
+                "search",
+                package
+            ]
         )
 
 
 # ============================================================
-#                       INSTALAR CON PKG
+#                         ACTUALIZAR
 # ============================================================
 
-def install_pkg(package):
+def update_packages():
 
-    package = package.strip()
+    manager = detect_package_manager()
 
-    if not package:
+    if manager is None:
 
         print(
-            "LynaStore: debes indicar un paquete."
+            "✗ No se encontró pkg ni apt."
         )
 
         return
 
-    if not command_exists("pkg"):
-
-        print(
-            "LynaStore: pkg no está disponible."
-        )
-
-        return
-
+    print()
     print(
-        f"\nInstalando '{package}' mediante pkg...\n"
+        "🔄 Actualizando índices..."
     )
+    print()
 
-    run_command(
-        [
-            "pkg",
-            "install",
-            "-y",
-            package
-        ]
-    )
-
-
-# ============================================================
-#                       INSTALAR CON APT
-# ============================================================
-
-def install_apt(package):
-
-    package = package.strip()
-
-    if not package:
-
-        print(
-            "LynaStore: debes indicar un paquete."
-        )
-
-        return
-
-    if not command_exists("apt"):
-
-        print(
-            "LynaStore: apt no está disponible."
-        )
-
-        return
-
-    print(
-        f"\nInstalando '{package}' mediante apt...\n"
-    )
-
-    run_command(
-        [
-            "apt",
-            "install",
-            "-y",
-            package
-        ]
-    )
-
-
-# ============================================================
-#                         INSTALAR
-# ============================================================
-
-def install(package):
-
-    package = package.strip()
-
-    if not package:
-
-        print(
-            "LynaStore: debes indicar una aplicación."
-        )
-
-        return
-
-    print(f"""
-¿Cómo quieres instalar '{package}'?
-
-P = pkg
-A = apt
-L = LynaPkg
-Q = Cancelar
-""")
-
-    method = input(
-        "Método> "
-    ).strip().upper()
-
-    if method == "P":
-
-        install_pkg(package)
-
-    elif method == "A":
-
-        install_apt(package)
-
-    elif method == "L":
-
-        print(
-            "\nLynaPkg todavía está siendo integrado con LynaStore."
-        )
-
-    elif method == "Q":
-
-        print(
-            "Instalación cancelada."
-        )
-
-    else:
-
-        print(
-            "Método no válido."
-        )
-
-
-# ============================================================
-#                        DESINSTALAR
-# ============================================================
-
-def uninstall(package):
-
-    package = package.strip()
-
-    if not package:
-
-        print(
-            "LynaStore: debes indicar un paquete."
-        )
-
-        return
-
-    print(f"""
-¿Cómo quieres desinstalar '{package}'?
-
-P = pkg
-A = apt
-Q = Cancelar
-""")
-
-    method = input(
-        "Método> "
-    ).strip().upper()
-
-    if method == "P":
-
-        if not command_exists("pkg"):
-
-            print(
-                "LynaStore: pkg no está disponible."
-            )
-
-            return
+    if manager == "pkg":
 
         run_command(
             [
                 "pkg",
-                "uninstall",
-                "-y",
-                package
+                "update"
             ]
         )
 
-    elif method == "A":
-
-        if not command_exists("apt"):
-
-            print(
-                "LynaStore: apt no está disponible."
-            )
-
-            return
+    else:
 
         run_command(
             [
                 "apt",
-                "remove",
-                "-y",
-                package
+                "update"
             ]
         )
 
-    elif method == "Q":
+
+# ============================================================
+#                          UPGRADE
+# ============================================================
+
+def upgrade_packages():
+
+    manager = detect_package_manager()
+
+    if manager is None:
 
         print(
-            "Desinstalación cancelada."
+            "✗ No se encontró pkg ni apt."
+        )
+
+        return
+
+    print()
+    print(
+        "⬆ Actualizando paquetes..."
+    )
+    print()
+
+    if manager == "pkg":
+
+        run_command(
+            [
+                "pkg",
+                "upgrade",
+                "-y"
+            ]
+        )
+
+    else:
+
+        run_command(
+            [
+                "apt",
+                "upgrade",
+                "-y"
+            ]
+        )
+
+
+# ============================================================
+#                           INFO
+# ============================================================
+
+def system_info():
+
+    manager = detect_package_manager()
+
+    print("""
+╔══════════════════════════════════════╗
+║          Información LynaStore       ║
+╚══════════════════════════════════════╝
+""")
+
+    print(
+        f"LynaStore:       {APP_VERSION}"
+    )
+
+    if manager:
+
+        print(
+            f"Gestor detectado: {manager}"
         )
 
     else:
 
         print(
-            "Método no válido."
+            "Gestor detectado: ninguno"
         )
 
+    print(
+        f"pkg disponible:   {'Sí' if command_exists('pkg') else 'No'}"
+    )
 
-# ============================================================
-#                         INFORMACIÓN
-# ============================================================
+    print(
+        f"apt disponible:   {'Sí' if command_exists('apt') else 'No'}"
+    )
 
-def about():
+    print(
+        f"python disponible: {'Sí' if command_exists('python') else 'No'}"
+    )
 
-    print(f"""
-{APP_NAME} {APP_VERSION}
-
-Tienda de aplicaciones de LynaOS.
-
-Funciones:
-  • Buscar paquetes
-  • Instalar mediante pkg
-  • Instalar mediante apt
-  • Desinstalar paquetes
-
-LynaStore forma parte del ecosistema LynaOS.
-""")
+    print(
+        f"git disponible:    {'Sí' if command_exists('git') else 'No'}"
+    )
 
 
 # ============================================================
-#                         APLICACIÓN
+#                           APP
 # ============================================================
 
 def run():
@@ -380,175 +433,204 @@ def run():
         try:
 
             command = input(
-                "LynaStore> "
+                "lynastore> "
             ).strip()
-
-            if not command:
-                continue
-
-            # ------------------------------------------------
-            # SALIR
-            # ------------------------------------------------
-
-            if command.upper() in (
-                "Q",
-                "EXIT"
-            ):
-
-                print(
-                    "Saliendo de LynaStore..."
-                )
-
-                break
-
-            # ------------------------------------------------
-            # AYUDA
-            # ------------------------------------------------
-
-            elif command.upper() == "H":
-
-                help_command()
-
-            # ------------------------------------------------
-            # ABOUT
-            # ------------------------------------------------
-
-            elif command.lower() == "about":
-
-                about()
-
-            # ------------------------------------------------
-            # INSTALAR
-            # ------------------------------------------------
-
-            elif command.upper().startswith("I"):
-
-                if ">" in command:
-
-                    package = command.split(
-                        ">",
-                        1
-                    )[1].strip()
-
-                else:
-
-                    package = input(
-                        "Aplicación> "
-                    ).strip()
-
-                install(package)
-
-            # ------------------------------------------------
-            # DESINSTALAR
-            # ------------------------------------------------
-
-            elif command.upper().startswith("U"):
-
-                if ">" in command:
-
-                    package = command.split(
-                        ">",
-                        1
-                    )[1].strip()
-
-                else:
-
-                    package = input(
-                        "Aplicación> "
-                    ).strip()
-
-                uninstall(package)
-
-            # ------------------------------------------------
-            # BUSCAR
-            # ------------------------------------------------
-
-            elif command.upper().startswith("S"):
-
-                if ">" in command:
-
-                    package = command.split(
-                        ">",
-                        1
-                    )[1].strip()
-
-                else:
-
-                    package = input(
-                        "Buscar> "
-                    ).strip()
-
-                search_package(package)
-
-            # ------------------------------------------------
-            # PKG
-            # ------------------------------------------------
-
-            elif command.upper().startswith("P"):
-
-                if ">" in command:
-
-                    package = command.split(
-                        ">",
-                        1
-                    )[1].strip()
-
-                else:
-
-                    package = input(
-                        "Paquete pkg> "
-                    ).strip()
-
-                install_pkg(package)
-
-            # ------------------------------------------------
-            # APT
-            # ------------------------------------------------
-
-            elif command.upper().startswith("A"):
-
-                if ">" in command:
-
-                    package = command.split(
-                        ">",
-                        1
-                    )[1].strip()
-
-                else:
-
-                    package = input(
-                        "Paquete apt> "
-                    ).strip()
-
-                install_apt(package)
-
-            # ------------------------------------------------
-            # CLEAR
-            # ------------------------------------------------
-
-            elif command.lower() == "clear":
-
-                os.system("clear")
-
-            else:
-
-                print(
-                    "LynaStore: comando desconocido."
-                )
-
-                print(
-                    "Escribe H para obtener ayuda."
-                )
 
         except KeyboardInterrupt:
 
+            print()
+
             print(
-                "\nOperación cancelada."
+                "Saliendo de LynaStore..."
             )
+
+            break
 
         except EOFError:
 
+            print()
+
             break
+
+        if not command:
+            continue
+
+        parts = command.split()
+
+        action = parts[0].upper()
+
+        # ----------------------------------------------------
+        # SALIR
+        # ----------------------------------------------------
+
+        if action in (
+            "Q",
+            "EXIT"
+        ):
+
+            print(
+                "Saliendo de LynaStore..."
+            )
+
+            break
+
+        # ----------------------------------------------------
+        # AYUDA
+        # ----------------------------------------------------
+
+        elif action in (
+            "H",
+            "HELP"
+        ):
+
+            help_command()
+
+        # ----------------------------------------------------
+        # INSTALAR
+        # ----------------------------------------------------
+
+        elif action in (
+            "I",
+            "INSTALL"
+        ):
+
+            if len(parts) < 2:
+
+                print(
+                    "Uso: I <paquete>"
+                )
+
+                continue
+
+            install_package(
+                " ".join(parts[1:])
+            )
+
+        # ----------------------------------------------------
+        # DESINSTALAR
+        # ----------------------------------------------------
+
+        elif action in (
+            "U",
+            "UNINSTALL"
+        ):
+
+            if len(parts) < 2:
+
+                print(
+                    "Uso: U <paquete>"
+                )
+
+                continue
+
+            uninstall_package(
+                " ".join(parts[1:])
+            )
+
+        # ----------------------------------------------------
+        # SEARCH
+        # ----------------------------------------------------
+
+        elif action in (
+            "S",
+            "SEARCH"
+        ):
+
+            if len(parts) < 2:
+
+                print(
+                    "Uso: S <paquete>"
+                )
+
+                continue
+
+            search_package(
+                " ".join(parts[1:])
+            )
+
+        # ----------------------------------------------------
+        # PKG
+        # ----------------------------------------------------
+
+        elif action == "P":
+
+            if len(parts) < 2:
+
+                print(
+                    "Uso: P <paquete>"
+                )
+
+                continue
+
+            install_package(
+                " ".join(parts[1:]),
+                "pkg"
+            )
+
+        # ----------------------------------------------------
+        # APT
+        # ----------------------------------------------------
+
+        elif action == "A":
+
+            if len(parts) < 2:
+
+                print(
+                    "Uso: A <paquete>"
+                )
+
+                continue
+
+            install_package(
+                " ".join(parts[1:]),
+                "apt"
+            )
+
+        # ----------------------------------------------------
+        # UPDATE
+        # ----------------------------------------------------
+
+        elif action == "UPDATE":
+
+            update_packages()
+
+        # ----------------------------------------------------
+        # UPGRADE
+        # ----------------------------------------------------
+
+        elif action == "UPGRADE":
+
+            upgrade_packages()
+
+        # ----------------------------------------------------
+        # INFO
+        # ----------------------------------------------------
+
+        elif action == "INFO":
+
+            system_info()
+
+        # ----------------------------------------------------
+        # CLEAR
+        # ----------------------------------------------------
+
+        elif action == "CLEAR":
+
+            os.system("clear")
+
+        # ----------------------------------------------------
+        # DESCONOCIDO
+        # ----------------------------------------------------
+
+        else:
+
+            print(
+                "Comando desconocido."
+            )
+
+            print(
+                "Escribe H para ver la ayuda."
+            )
 
 
 # ============================================================

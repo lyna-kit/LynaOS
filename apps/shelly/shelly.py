@@ -2,292 +2,541 @@
 
 import os
 import re
-import sys
-import urllib.parse
+import urllib.error
 import urllib.request
-from html.parser import HTMLParser
+from html import unescape
+from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 
 APP_NAME = "Shelly"
-APP_VERSION = "0.1"
+APP_VERSION = "0.3"
 
-current_url = ""
+USER_AGENT = "Shelly/0.3 LynaOS"
 
 
 # ============================================================
-#                        HTML PARSER
+#                         BANNER
 # ============================================================
 
-class ShellyParser(HTMLParser):
+def banner():
 
-    def __init__(self):
+    print("""
+╔══════════════════════════════════════╗
+║             Shelly 0.3               ║
+║        Navegador de texto            ║
+╚══════════════════════════════════════╝
 
-        super().__init__()
+Comandos:
 
-        self.output = []
-        self.links = []
-        self.in_script = False
-        self.in_style = False
+  OPEN <URL>       Abrir página
+  LINKS            Mostrar enlaces
+  BACK             Página anterior
+  FORWARD          Página siguiente
+  SAVE <archivo>   Guardar página
+  CLEAR            Limpiar pantalla
+  ABOUT            Información
+  H                Ayuda
+  Q                Salir
+""")
 
-    def handle_starttag(self, tag, attrs):
 
-        tag = tag.lower()
+# ============================================================
+#                           AYUDA
+# ============================================================
 
-        if tag in ("script", "style"):
-            self.in_script = True
-            self.in_style = tag == "style"
-            return
+def help_command():
 
-        if tag == "br":
-            self.output.append("\n")
+    print("""
+Shelly 0.3
 
-        elif tag in ("p", "div"):
-            self.output.append("\n")
+Navegación:
 
-        elif tag in ("h1", "h2", "h3"):
+  OPEN <URL>       Abrir una página web
+  LINKS            Mostrar enlaces encontrados
+  BACK             Volver a la página anterior
+  FORWARD          Avanzar en el historial
 
-            self.output.append(
-                "\n\n### "
-            )
+Archivos:
 
-        elif tag == "li":
+  SAVE <archivo>   Guardar el contenido actual
 
-            self.output.append(
-                "\n* "
-            )
+Sistema:
 
-        elif tag == "a":
+  CLEAR            Limpiar pantalla
+  ABOUT            Información
+  H                Ayuda
+  Q                Salir
 
-            attributes = dict(attrs)
-            href = attributes.get("href")
+Ejemplos:
 
-            if href:
+  OPEN https://example.com
+  LINKS
+  SAVE pagina.txt
+""")
 
-                self.links.append(href)
 
-                number = len(self.links)
+# ============================================================
+#                    LIMPIAR HTML
+# ============================================================
 
-                self.output.append(
-                    f" [{number}]"
-                )
+def html_to_text(html):
 
-    def handle_endtag(self, tag):
+    # Eliminar scripts y estilos.
 
-        tag = tag.lower()
+    html = re.sub(
+        r"<script\b[^>]*>.*?</script>",
+        " ",
+        html,
+        flags=re.IGNORECASE | re.DOTALL
+    )
 
-        if tag == "script":
+    html = re.sub(
+        r"<style\b[^>]*>.*?</style>",
+        " ",
+        html,
+        flags=re.IGNORECASE | re.DOTALL
+    )
 
-            self.in_script = False
+    # Separadores visuales.
 
-        elif tag == "style":
+    html = re.sub(
+        r"<br\s*/?>",
+        "\n",
+        html,
+        flags=re.IGNORECASE
+    )
 
-            self.in_style = False
+    html = re.sub(
+        r"</p\s*>",
+        "\n\n",
+        html,
+        flags=re.IGNORECASE
+    )
 
-        elif tag in ("p", "div"):
+    html = re.sub(
+        r"</div\s*>",
+        "\n",
+        html,
+        flags=re.IGNORECASE
+    )
 
-            self.output.append("\n")
+    html = re.sub(
+        r"</h[1-6]\s*>",
+        "\n\n",
+        html,
+        flags=re.IGNORECASE
+    )
 
-    def handle_data(self, data):
+    # Eliminar etiquetas.
 
-        if self.in_script or self.in_style:
-            return
+    html = re.sub(
+        r"<[^>]+>",
+        " ",
+        html
+    )
 
-        text = " ".join(
-            data.split()
+    # Decodificar entidades HTML.
+
+    text = unescape(html)
+
+    # Normalizar espacios.
+
+    text = re.sub(
+        r"[ \t]+",
+        " ",
+        text
+    )
+
+    text = re.sub(
+        r"\n\s*\n\s*\n+",
+        "\n\n",
+        text
+    )
+
+    return text.strip()
+
+
+# ============================================================
+#                         ENLACES
+# ============================================================
+
+def extract_links(html, base_url):
+
+    links = []
+
+    pattern = re.compile(
+        r'<a\s+[^>]*href\s*=\s*["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+        re.IGNORECASE | re.DOTALL
+    )
+
+    for match in pattern.finditer(html):
+
+        href = unescape(
+            match.group(1).strip()
         )
 
-        if text:
-            self.output.append(
-                text + " "
+        label = html_to_text(
+            match.group(2)
+        )
+
+        if not href:
+            continue
+
+        absolute = urljoin(
+            base_url,
+            href
+        )
+
+        parsed = urlparse(
+            absolute
+        )
+
+        if parsed.scheme not in (
+            "http",
+            "https"
+        ):
+
+            continue
+
+        links.append(
+            (
+                label or absolute,
+                absolute
             )
-
-    def get_text(self):
-
-        text = "".join(
-            self.output
         )
 
-        text = re.sub(
-            r"\n\s*\n\s*\n+",
-            "\n\n",
-            text
-        )
-
-        return text.strip()
+    return links
 
 
 # ============================================================
-#                         DESCARGAR
+#                        DESCARGAR
 # ============================================================
 
-def fetch(url):
+def fetch_page(url):
+
+    if not url.startswith(
+        ("http://", "https://")
+    ):
+
+        url = "https://" + url
+
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": USER_AGENT
+        }
+    )
 
     try:
-
-        request = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent":
-                    "Shelly/0.1 LynaOS"
-            }
-        )
 
         with urllib.request.urlopen(
             request,
             timeout=15
         ) as response:
 
+            final_url = response.geturl()
             content_type = response.headers.get(
                 "Content-Type",
                 ""
             )
 
-            if "text/html" not in content_type:
-
-                print(
-                    f"Shelly: contenido no HTML ({content_type})"
-                )
-
-                return None
+            data = response.read()
 
             charset = response.headers.get_content_charset()
 
             if not charset:
+
                 charset = "utf-8"
 
-            data = response.read()
+            try:
 
-            return (
-                data.decode(
+                html = data.decode(
                     charset,
                     errors="replace"
-                ),
-                response.geturl()
+                )
+
+            except LookupError:
+
+                html = data.decode(
+                    "utf-8",
+                    errors="replace"
+                )
+
+            return (
+                final_url,
+                content_type,
+                html
             )
+
+    except urllib.error.HTTPError as error:
+
+        print(
+            f"✗ HTTP {error.code}: {error.reason}"
+        )
+
+    except urllib.error.URLError as error:
+
+        print(
+            f"✗ Error de conexión: {error.reason}"
+        )
+
+    except TimeoutError:
+
+        print(
+            "✗ La conexión tardó demasiado."
+        )
 
     except Exception as error:
 
         print(
-            f"Shelly: error de conexión: {error}"
+            f"✗ Error: {error}"
         )
 
-        return None
+    return None
 
 
 # ============================================================
-#                          MOSTRAR
+#                         NAVEGADOR
 # ============================================================
 
-def browse(url):
+class Browser:
 
-    global current_url
+    def __init__(self):
 
-    if not url.startswith(
-        ("http://", "https://")
-    ):
+        self.history = []
+        self.history_index = -1
 
-        url = (
-            "https://"
-            + url
+        self.current_url = None
+        self.current_html = None
+        self.current_text = None
+        self.current_links = []
+
+    # --------------------------------------------------------
+    # OPEN
+    # --------------------------------------------------------
+
+    def open(self, url, add_history=True):
+
+        print()
+        print(
+            f"🌐 Abriendo: {url}"
         )
 
-    result = fetch(url)
+        result = fetch_page(url)
 
-    if result is None:
-        return
+        if result is None:
 
-    html, final_url = result
+            return False
 
-    parser = ShellyParser()
+        final_url, content_type, html = result
 
-    parser.feed(html)
+        if "text/html" not in content_type.lower():
 
-    current_url = final_url
+            print(
+                f"⚠ Tipo de contenido: {content_type}"
+            )
 
-    print()
-    print(
-        "═" * 70
-    )
+        text = html_to_text(
+            html
+        )
 
-    print(
-        f"Shelly — {current_url}"
-    )
+        links = extract_links(
+            html,
+            final_url
+        )
 
-    print(
-        "═" * 70
-    )
+        self.current_url = final_url
+        self.current_html = html
+        self.current_text = text
+        self.current_links = links
 
-    print()
+        if add_history:
 
-    text = parser.get_text()
+            if (
+                self.history_index >= 0
+                and self.history[
+                    self.history_index
+                ] == final_url
+            ):
 
-    if text:
+                pass
 
-        print(text)
+            else:
 
-    else:
+                self.history = self.history[
+                    :self.history_index + 1
+                ]
+
+                self.history.append(
+                    final_url
+                )
+
+                self.history_index = (
+                    len(self.history) - 1
+                )
+
+        print()
+        print(
+            f"✓ {final_url}"
+        )
+
+        print()
+
+        if text:
+
+            print(text)
+
+        else:
+
+            print(
+                "(La página no contiene texto visible.)"
+            )
+
+        print()
 
         print(
-            "(La página no contiene texto visible.)"
+            f"Enlaces encontrados: {len(links)}"
         )
 
-    print()
+        return True
 
-    if parser.links:
+    # --------------------------------------------------------
+    # LINKS
+    # --------------------------------------------------------
 
+    def show_links(self):
+
+        if not self.current_links:
+
+            print(
+                "No hay enlaces disponibles."
+            )
+
+            return
+
+        print()
         print(
             "Enlaces:"
         )
+        print()
 
-        for number, link in enumerate(
-            parser.links,
+        for number, (label, url) in enumerate(
+            self.current_links,
             start=1
         ):
 
-            absolute = urllib.parse.urljoin(
-                current_url,
-                link
+            print(
+                f"{number}. {label}"
             )
 
             print(
-                f"  [{number}] {absolute}"
+                f"   {url}"
             )
 
-    print(
-        "═" * 70
-    )
+    # --------------------------------------------------------
+    # BACK
+    # --------------------------------------------------------
+
+    def back(self):
+
+        if self.history_index <= 0:
+
+            print(
+                "No hay una página anterior."
+            )
+
+            return
+
+        self.history_index -= 1
+
+        url = self.history[
+            self.history_index
+        ]
+
+        self.open(
+            url,
+            add_history=False
+        )
+
+    # --------------------------------------------------------
+    # FORWARD
+    # --------------------------------------------------------
+
+    def forward(self):
+
+        if self.history_index >= (
+            len(self.history) - 1
+        ):
+
+            print(
+                "No hay una página siguiente."
+            )
+
+            return
+
+        self.history_index += 1
+
+        url = self.history[
+            self.history_index
+        ]
+
+        self.open(
+            url,
+            add_history=False
+        )
+
+    # --------------------------------------------------------
+    # SAVE
+    # --------------------------------------------------------
+
+    def save(self, filename):
+
+        if not self.current_text:
+
+            print(
+                "No hay ninguna página abierta."
+            )
+
+            return
+
+        path = Path(
+            filename
+        ).expanduser()
+
+        if not path.is_absolute():
+
+            path = Path.cwd() / path
+
+        try:
+
+            path.parent.mkdir(
+                parents=True,
+                exist_ok=True
+            )
+
+            with path.open(
+                "w",
+                encoding="utf-8"
+            ) as file:
+
+                file.write(
+                    self.current_text
+                )
+
+            print(
+                f"✓ Página guardada en: {path}"
+            )
+
+        except Exception as error:
+
+            print(
+                f"✗ Error guardando: {error}"
+            )
 
 
 # ============================================================
-#                          AYUDA
-# ============================================================
-
-def help_command():
-
-    print("""
-Shelly 0.1 — navegador de texto
-
-Comandos:
-
-  open <URL>      Abrir una página
-  back            Volver
-  links           Mostrar enlaces
-  go <número>     Abrir un enlace
-  refresh         Recargar página
-  clear           Limpiar pantalla
-  about           Información
-  help            Ayuda
-  exit            Salir
-
-Ejemplos:
-
-  open https://example.com
-  open https://www.wikipedia.org
-""")
-
-
-# ============================================================
-#                          ABOUT
+#                           ABOUT
 # ============================================================
 
 def about():
@@ -295,87 +544,27 @@ def about():
     print(f"""
 {APP_NAME} {APP_VERSION}
 
-Navegador web de texto oficial de LynaOS.
+Navegador web de texto de LynaOS.
 
-Motor: Python urllib + HTMLParser
-Interfaz: terminal
-Sistema: LynaOS
+Funciones:
+
+  • Navegación HTTP/HTTPS
+  • Conversión HTML → texto
+  • Extracción de enlaces
+  • Historial
+  • Guardado de páginas
 """)
 
 
 # ============================================================
-#                          ENLACES
-# ============================================================
-
-last_links = []
-
-
-def show_links():
-
-    global last_links
-
-    if not current_url:
-
-        print(
-            "Shelly: no hay ninguna página abierta."
-        )
-
-        return
-
-    result = fetch(current_url)
-
-    if result is None:
-        return
-
-    html, final_url = result
-
-    parser = ShellyParser()
-
-    parser.feed(html)
-
-    last_links = [
-        urllib.parse.urljoin(
-            final_url,
-            link
-        )
-        for link in parser.links
-    ]
-
-    if not last_links:
-
-        print(
-            "Shelly: esta página no tiene enlaces."
-        )
-
-        return
-
-    for number, link in enumerate(
-        last_links,
-        start=1
-    ):
-
-        print(
-            f"[{number}] {link}"
-        )
-
-
-# ============================================================
-#                         APLICACIÓN
+#                            APP
 # ============================================================
 
 def run():
 
-    global current_url
-    global last_links
+    browser = Browser()
 
-    print(f"""
-╔══════════════════════════════════════╗
-║            Shelly {APP_VERSION}             ║
-║       Navegador de texto LynaOS     ║
-╚══════════════════════════════════════╝
-
-Escribe HELP para obtener ayuda.
-""")
+    banner()
 
     while True:
 
@@ -385,172 +574,158 @@ Escribe HELP para obtener ayuda.
                 "shelly> "
             ).strip()
 
-            if not command:
-                continue
-
-            parts = command.split(
-                maxsplit=1
-            )
-
-            cmd = parts[0].lower()
-
-            argument = (
-                parts[1].strip()
-                if len(parts) > 1
-                else ""
-            )
-
-            # ------------------------------------------------
-            # EXIT
-            # ------------------------------------------------
-
-            if cmd in ("exit", "quit"):
-
-                print(
-                    "Saliendo de Shelly..."
-                )
-
-                break
-
-            # ------------------------------------------------
-            # OPEN
-            # ------------------------------------------------
-
-            elif cmd == "open":
-
-                if not argument:
-
-                    print(
-                        "Uso: open <URL>"
-                    )
-
-                else:
-
-                    browse(argument)
-
-            # ------------------------------------------------
-            # LINKS
-            # ------------------------------------------------
-
-            elif cmd == "links":
-
-                show_links()
-
-            # ------------------------------------------------
-            # GO
-            # ------------------------------------------------
-
-            elif cmd == "go":
-
-                if not argument:
-
-                    print(
-                        "Uso: go <número>"
-                    )
-
-                    continue
-
-                try:
-
-                    number = int(
-                        argument
-                    )
-
-                    if (
-                        number < 1
-                        or number > len(last_links)
-                    ):
-
-                        print(
-                            "Enlace inexistente."
-                        )
-
-                    else:
-
-                        browse(
-                            last_links[
-                                number - 1
-                            ]
-                        )
-
-                except ValueError:
-
-                    print(
-                        "Número inválido."
-                    )
-
-            # ------------------------------------------------
-            # REFRESH
-            # ------------------------------------------------
-
-            elif cmd == "refresh":
-
-                if current_url:
-
-                    browse(
-                        current_url
-                    )
-
-                else:
-
-                    print(
-                        "No hay ninguna página abierta."
-                    )
-
-            # ------------------------------------------------
-            # BACK
-            # ------------------------------------------------
-
-            elif cmd == "back":
-
-                print(
-                    "Historial de navegación disponible "
-                    "en una versión futura de Shelly."
-                )
-
-            # ------------------------------------------------
-            # HELP
-            # ------------------------------------------------
-
-            elif cmd in ("help", "h"):
-
-                help_command()
-
-            # ------------------------------------------------
-            # ABOUT
-            # ------------------------------------------------
-
-            elif cmd == "about":
-
-                about()
-
-            # ------------------------------------------------
-            # CLEAR
-            # ------------------------------------------------
-
-            elif cmd == "clear":
-
-                os.system("clear")
-
-            else:
-
-                print(
-                    "Shelly: comando desconocido."
-                )
-
-                print(
-                    "Escribe HELP para ver los comandos."
-                )
-
         except KeyboardInterrupt:
 
             print()
+            print(
+                "Saliendo de Shelly..."
+            )
 
             break
 
         except EOFError:
 
+            print()
+
             break
+
+        if not command:
+            continue
+
+        parts = command.split(
+            None,
+            1
+        )
+
+        action = parts[0].upper()
+
+        argument = (
+            parts[1].strip()
+            if len(parts) > 1
+            else ""
+        )
+
+        # ----------------------------------------------------
+        # SALIR
+        # ----------------------------------------------------
+
+        if action in (
+            "Q",
+            "EXIT"
+        ):
+
+            print(
+                "Saliendo de Shelly..."
+            )
+
+            break
+
+        # ----------------------------------------------------
+        # AYUDA
+        # ----------------------------------------------------
+
+        elif action in (
+            "H",
+            "HELP"
+        ):
+
+            help_command()
+
+        # ----------------------------------------------------
+        # OPEN
+        # ----------------------------------------------------
+
+        elif action in (
+            "OPEN",
+            "GO"
+        ):
+
+            if not argument:
+
+                print(
+                    "Uso: OPEN <URL>"
+                )
+
+                continue
+
+            browser.open(
+                argument
+            )
+
+        # ----------------------------------------------------
+        # LINKS
+        # ----------------------------------------------------
+
+        elif action == "LINKS":
+
+            browser.show_links()
+
+        # ----------------------------------------------------
+        # BACK
+        # ----------------------------------------------------
+
+        elif action == "BACK":
+
+            browser.back()
+
+        # ----------------------------------------------------
+        # FORWARD
+        # ----------------------------------------------------
+
+        elif action == "FORWARD":
+
+            browser.forward()
+
+        # ----------------------------------------------------
+        # SAVE
+        # ----------------------------------------------------
+
+        elif action == "SAVE":
+
+            if not argument:
+
+                print(
+                    "Uso: SAVE <archivo>"
+                )
+
+                continue
+
+            browser.save(
+                argument
+            )
+
+        # ----------------------------------------------------
+        # CLEAR
+        # ----------------------------------------------------
+
+        elif action in (
+            "CLEAR",
+            "CLS"
+        ):
+
+            os.system("clear")
+
+        # ----------------------------------------------------
+        # ABOUT
+        # ----------------------------------------------------
+
+        elif action == "ABOUT":
+
+            about()
+
+        # ----------------------------------------------------
+        # DESCONOCIDO
+        # ----------------------------------------------------
+
+        else:
+
+            print(
+                "Comando desconocido."
+            )
+
+            print(
+                "Escribe H para ver la ayuda."
+            )
 
 
 # ============================================================

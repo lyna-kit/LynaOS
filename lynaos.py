@@ -1,491 +1,298 @@
 #!/usr/bin/env python3
 
 import os
-import sys
-import json
-import shlex
-import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
 # ============================================================
-#                         LynaOS 0.2
+#                         LynaOS 0.3
 # ============================================================
 
-LYNAOS_NAME = "LynaOS"
-LYNAOS_VERSION = "0.2"
+APP_NAME = "LynaOS"
+VERSION = "0.3"
 
-LYNAOS_ROOT = Path(__file__).resolve().parent
-APPS_DIR = LYNAOS_ROOT / "apps"
-CONFIG_DIR = Path.home() / ".lynaos"
-CONFIG_FILE = CONFIG_DIR / "config.json"
+ROOT = Path(__file__).resolve().parent
+APPS_DIR = ROOT / "apps"
 
 
 # ============================================================
-#                       CONFIGURACIÓN
+#                         APLICACIONES
 # ============================================================
 
-DEFAULT_CONFIG = {
-    "name": "LynaOS",
-    "version": LYNAOS_VERSION,
-    "user": "lyna",
-    "hostname": "lynaos",
-    "theme": "default",
-    "language": "es",
-    "music": True,
-    "notifications": True
+APPLICATIONS = {
+    "1": ("LynaCalc", "lynacalc", "main.py"),
+    "2": ("LynaFiles", "lynafiles", "lynafiles.py"),
+    "3": ("LynaFM", "lynafm", "lynafm.py"),
+    "4": ("LynaSettings", "lynasettings", "lynasettings.py"),
+    "5": ("LynaStore", "lynastore", "lynastore.py"),
+    "6": ("Shelly", "shelly", "shelly.py"),
+    "7": ("LynaClock", "lynaclock", "lynaclock.py"),
+    "8": ("LynaTop", "lynatop", "lynatop.py"),
 }
 
 
-def load_config():
-
-    CONFIG_DIR.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    if not CONFIG_FILE.exists():
-
-        save_config(
-            DEFAULT_CONFIG.copy()
-        )
-
-    try:
-
-        with open(
-            CONFIG_FILE,
-            "r",
-            encoding="utf-8"
-        ) as file:
-
-            return json.load(file)
-
-    except Exception:
-
-        return DEFAULT_CONFIG.copy()
-
-
-def save_config(config):
-
-    CONFIG_DIR.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    with open(
-        CONFIG_FILE,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        json.dump(
-            config,
-            file,
-            indent=4,
-            ensure_ascii=False
-        )
-
-
 # ============================================================
-#                        BANNER
+#                           BANNER
 # ============================================================
 
 def banner():
 
-    config = load_config()
+    os.system("clear")
 
     print("""
-╔══════════════════════════════════════════╗
-║                                          ║
-║                 LynaOS                   ║
-║                  0.2                     ║
-║                                          ║
-║        Lightweight OS for Termux         ║
-║                                          ║
-╚══════════════════════════════════════════╝
+╔══════════════════════════════════════╗
+║             LynaOS 0.3               ║
+║       Sistema operativo LynaOS       ║
+╚══════════════════════════════════════╝
 """)
 
-    print(
-        f"Bienvenida, {config.get('user', 'lyna')}."
-    )
 
-    print(
-        "Escribe 'help' para obtener ayuda."
-    )
+# ============================================================
+#                           MENÚ
+# ============================================================
 
+def menu():
+
+    print("Aplicaciones:")
+    print()
+
+    for key, application in APPLICATIONS.items():
+
+        name = application[0]
+
+        print(
+            f"  {key}. {name}"
+        )
+
+    print()
+    print("Sistema:")
+    print()
+    print("  I. Información")
+    print("  B. LynaBash")
+    print("  R. Reiniciar")
+    print("  Q. Salir")
     print()
 
 
 # ============================================================
-#                       APLICACIONES
-# ============================================================
-
-def get_apps():
-
-    apps = {}
-
-    if not APPS_DIR.exists():
-
-        return apps
-
-    for directory in sorted(
-        APPS_DIR.iterdir()
-    ):
-
-        if not directory.is_dir():
-            continue
-
-        python_files = list(
-            directory.glob("*.py")
-        )
-
-        if not python_files:
-            continue
-
-        main_file = None
-
-        preferred = (
-            directory.name
-            + ".py"
-        )
-
-        for file in python_files:
-
-            if file.name == preferred:
-
-                main_file = file
-                break
-
-        if main_file is None:
-
-            main_file = python_files[0]
-
-        command = directory.name.lower()
-
-        apps[command] = main_file
-
-    return apps
-
-
-def list_apps():
-
-    apps = get_apps()
-
-    print("""
-Aplicaciones disponibles
-────────────────────────
-""")
-
-    if not apps:
-
-        print(
-            "No hay aplicaciones instaladas."
-        )
-
-        return
-
-    for command, path in apps.items():
-
-        print(
-            f"  ✓ {command}"
-        )
-
-
-def launch_app(command, args=None):
-
-    if args is None:
-        args = []
-
-    apps = get_apps()
-
-    command = command.lower()
-
-    if command not in apps:
-
-        return False
-
-    application = apps[command]
-
-    try:
-
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(application),
-                *args
-            ]
-        )
-
-        return True
-
-    except KeyboardInterrupt:
-
-        return True
-
-    except Exception as error:
-
-        print(
-            f"LynaOS: error ejecutando {command}: {error}"
-        )
-
-        return True
-
-
-# ============================================================
-#                          INFO
+#                       INFORMACIÓN
 # ============================================================
 
 def system_info():
 
-    config = load_config()
-
     print(f"""
-{LYNAOS_NAME} {LYNAOS_VERSION}
+╔══════════════════════════════════════╗
+║          Información LynaOS          ║
+╚══════════════════════════════════════╝
 
-Sistema operativo : {LYNAOS_NAME}
-Versión           : {LYNAOS_VERSION}
-Usuario           : {config.get("user")}
-Hostname          : {config.get("hostname")}
-Arquitectura     : {os.uname().machine}
-Directorio       : {LYNAOS_ROOT}
-Aplicaciones     : {len(get_apps())}
+Sistema:       LynaOS
+Versión:       {VERSION}
+Directorio:    {ROOT}
+Aplicaciones:  {len(APPLICATIONS)}
+
+Python:        {sys.version.split()[0]}
 """)
 
 
 # ============================================================
-#                           HELP
+#                     EJECUTAR APLICACIÓN
 # ============================================================
 
-def help_command():
+def launch_application(key):
 
-    print("""
-╔══════════════════════════════════════════╗
-║              LynaOS 0.2                  ║
-╚══════════════════════════════════════════╝
+    if key not in APPLICATIONS:
 
-Comandos del sistema:
+        print(
+            "LynaOS: aplicación no encontrada."
+        )
 
-  help              Mostrar esta ayuda
-  apps              Mostrar aplicaciones
-  about             Información del sistema
-  clear             Limpiar pantalla
-  exit              Apagar LynaOS
+        return
 
-Aplicaciones:
+    name, directory, filename = APPLICATIONS[key]
 
-  lynacalc          Calculadora
-  lynafiles         Gestor de archivos
-  lynasettings      Ajustes
-  lynastore         Tienda de aplicaciones
-  lynafm            Reproductor de música
-  shelly            Navegador de texto
+    app_path = APPS_DIR / directory / filename
 
-También puedes ejecutar comandos normales
-de Termux mediante LynaBash.
-""")
+    if not app_path.exists():
 
+        print()
+        print(
+            f"✗ {name} no está instalada correctamente."
+        )
 
-# ============================================================
-#                       COMANDOS LINUX
-# ============================================================
+        print(
+            f"Falta: {app_path}"
+        )
 
-def execute_shell(command):
+        return
+
+    print()
+    print(
+        f"▶ Iniciando {name}..."
+    )
+    print()
 
     try:
 
-        arguments = shlex.split(
-            command
-        )
-
-        if not arguments:
-            return
-
         subprocess.run(
-            arguments
+            [
+                sys.executable,
+                str(app_path)
+            ]
         )
 
-    except FileNotFoundError:
+    except KeyboardInterrupt:
+
+        print()
+
+    except Exception as error:
 
         print(
-            f"Comando no encontrado: {arguments[0]}"
+            f"LynaOS: error ejecutando {name}:"
+        )
+
+        print(error)
+
+    input(
+        "\nPresiona ENTER para volver a LynaOS..."
+    )
+
+
+# ============================================================
+#                       LYNABASH
+# ============================================================
+
+def launch_bash():
+
+    bash = ROOT / "shell" / "lynashell.sh"
+
+    if not bash.exists():
+
+        print(
+            "LynaBash no está instalado."
+        )
+
+        return
+
+    print()
+    print("▶ Iniciando LynaBash...")
+    print()
+
+    try:
+
+        subprocess.run(
+            ["bash", str(bash)]
         )
 
     except Exception as error:
 
         print(
-            f"LynaBash: {error}"
+            f"Error iniciando LynaBash: {error}"
         )
 
-
-# ============================================================
-#                       LynaBash
-# ============================================================
-
-def shell():
-
-    while True:
-
-        config = load_config()
-
-        prompt = (
-            f"{config.get('user', 'lyna')}"
-            "@"
-            f"{config.get('hostname', 'lynaos')}"
-            ":~$ "
-        )
-
-        try:
-
-            command = input(
-                prompt
-            ).strip()
-
-            if not command:
-                continue
-
-            parts = shlex.split(
-                command
-            )
-
-            cmd = parts[0].lower()
-
-            args = parts[1:]
-
-            # ------------------------------------------------
-            # SISTEMA
-            # ------------------------------------------------
-
-            if cmd == "help":
-
-                help_command()
-
-            elif cmd == "apps":
-
-                list_apps()
-
-            elif cmd in (
-                "about",
-                "neofetch",
-                "info"
-            ):
-
-                system_info()
-
-            elif cmd == "clear":
-
-                os.system("clear")
-
-            elif cmd in (
-                "exit",
-                "shutdown"
-            ):
-
-                print(
-                    "\nApagando LynaOS..."
-                )
-
-                break
-
-            # ------------------------------------------------
-            # APLICACIONES
-            # ------------------------------------------------
-
-            elif launch_app(
-                cmd,
-                args
-            ):
-
-                pass
-
-            # ------------------------------------------------
-            # BASH / TERMUX
-            # ------------------------------------------------
-
-            else:
-
-                execute_shell(
-                    command
-                )
-
-        except KeyboardInterrupt:
-
-            print()
-
-        except EOFError:
-
-            print()
-
-            break
-
-
-# ============================================================
-#                         ARRANQUE
-# ============================================================
-
-def boot():
-
-    os.system("clear")
-
-    banner()
-
-    print(
-        "Inicializando LynaOS..."
+    input(
+        "\nPresiona ENTER para volver..."
     )
 
-    print(
-        f"Aplicaciones detectadas: {len(get_apps())}"
-    )
 
-    print(
-        "LynaBash iniciado.\n"
-    )
+# ============================================================
+#                         REINICIAR
+# ============================================================
 
-    shell()
+def restart():
+
+    main()
 
 
 # ============================================================
-#                           MAIN
+#                            MAIN
 # ============================================================
 
 def main():
 
-    if len(sys.argv) > 1:
+    while True:
 
-        argument = sys.argv[1]
+        banner()
+        menu()
 
-        if argument in (
-            "--version",
-            "-v"
-        ):
+        command = input(
+            "lynaos> "
+        ).strip()
 
+        if not command:
+            continue
+
+        command = command.upper()
+
+        # --------------------------------------------
+        # SALIR
+        # --------------------------------------------
+
+        if command in ("Q", "EXIT"):
+
+            print()
             print(
-                f"{LYNAOS_NAME} {LYNAOS_VERSION}"
+                "Apagando LynaOS..."
             )
 
-            return
+            break
 
-        if argument in (
-            "--apps",
-            "-a"
-        ):
+        # --------------------------------------------
+        # INFORMACIÓN
+        # --------------------------------------------
 
-            list_apps()
-
-            return
-
-        if argument in (
-            "--info",
-            "-i"
-        ):
+        elif command == "I":
 
             system_info()
 
-            return
+            input(
+                "\nPresiona ENTER para continuar..."
+            )
 
-    boot()
+        # --------------------------------------------
+        # LYNABASH
+        # --------------------------------------------
 
+        elif command == "B":
+
+            launch_bash()
+
+        # --------------------------------------------
+        # REINICIAR
+        # --------------------------------------------
+
+        elif command == "R":
+
+            continue
+
+        # --------------------------------------------
+        # APLICACIONES
+        # --------------------------------------------
+
+        elif command in APPLICATIONS:
+
+            launch_application(command)
+
+        # --------------------------------------------
+        # COMANDO DESCONOCIDO
+        # --------------------------------------------
+
+        else:
+
+            print()
+            print(
+                "Comando desconocido."
+            )
+
+            input(
+                "\nPresiona ENTER para continuar..."
+            )
+
+
+# ============================================================
+#                            START
+# ============================================================
 
 if __name__ == "__main__":
-
     main()
