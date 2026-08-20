@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 
 import os
-import time
-import shutil
 import signal
+import shutil
+import time
 
 
 APP_NAME = "LynaTop"
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.4"
 
 REFRESH_TIME = 2
+
+
+# ============================================================
+#                         ESTADO
+# ============================================================
+
+_previous_cpu = None
+_process_cpu = {}
 
 
 # ============================================================
@@ -20,8 +28,8 @@ def banner():
 
     print("""
 ╔══════════════════════════════════════════════════════════╗
-║                   LynaTop 0.3.1                         ║
-║             Monitor de procesos LynaOS                  ║
+║                    LynaTop 0.4                          ║
+║              Monitor de LynaOS                          ║
 ╚══════════════════════════════════════════════════════════╝
 """)
 
@@ -32,19 +40,20 @@ def banner():
 
 def format_bytes(value):
 
-    units = [
+    units = (
         "B",
         "KB",
         "MB",
         "GB",
         "TB"
-    ]
+    )
 
     value = float(value)
 
     for unit in units:
 
         if value < 1024:
+
             return f"{value:.1f}{unit}"
 
         value /= 1024
@@ -70,10 +79,6 @@ def terminal_size():
         return (100, 30)
 
 
-# ============================================================
-#                       /PROC
-# ============================================================
-
 def read_file(path):
 
     try:
@@ -92,15 +97,10 @@ def read_file(path):
 
 
 # ============================================================
-#                         CPU
+#                           CPU
 # ============================================================
 
-_previous_cpu = None
-
-
-def cpu_percent():
-
-    global _previous_cpu
+def read_cpu_times():
 
     content = read_file(
         "/proc/stat"
@@ -108,77 +108,89 @@ def cpu_percent():
 
     if not content:
 
-        return 0.0
-
-    line = content.splitlines()[0]
-
-    parts = line.split()
-
-    if len(parts) < 5:
-
-        return 0.0
+        return None
 
     try:
+
+        line = content.splitlines()[0]
+        parts = line.split()
+
+        if not parts or parts[0] != "cpu":
+
+            return None
 
         values = [
             int(value)
             for value in parts[1:]
         ]
 
-        idle = values[3]
+        if len(values) < 4:
+
+            return None
 
         total = sum(values)
+        idle = values[3]
 
-        if _previous_cpu is None:
+        return total, idle
 
-            _previous_cpu = (
-                total,
-                idle
-            )
+    except (
+        ValueError,
+        IndexError
+    ):
 
-            time.sleep(0.1)
+        return None
 
-            return cpu_percent()
 
-        previous_total, previous_idle = (
-            _previous_cpu
-        )
+def cpu_percent():
 
-        _previous_cpu = (
-            total,
-            idle
-        )
+    global _previous_cpu
 
-        total_delta = (
-            total -
-            previous_total
-        )
+    current = read_cpu_times()
 
-        idle_delta = (
-            idle -
-            previous_idle
-        )
-
-        if total_delta <= 0:
-
-            return 0.0
-
-        usage = (
-            1 -
-            idle_delta / total_delta
-        ) * 100
-
-        return max(
-            0.0,
-            min(
-                100.0,
-                usage
-            )
-        )
-
-    except Exception:
+    if current is None:
 
         return 0.0
+
+    if _previous_cpu is None:
+
+        _previous_cpu = current
+
+        return 0.0
+
+    previous_total, previous_idle = (
+        _previous_cpu
+    )
+
+    current_total, current_idle = current
+
+    total_delta = (
+        current_total -
+        previous_total
+    )
+
+    idle_delta = (
+        current_idle -
+        previous_idle
+    )
+
+    _previous_cpu = current
+
+    if total_delta <= 0:
+
+        return 0.0
+
+    usage = (
+        1 -
+        idle_delta / total_delta
+    ) * 100
+
+    return max(
+        0.0,
+        min(
+            100.0,
+            usage
+        )
+    )
 
 
 # ============================================================
@@ -193,11 +205,7 @@ def memory_stats():
 
     if not content:
 
-        return (
-            0,
-            0,
-            0
-        )
+        return 0, 0, 0
 
     values = {}
 
@@ -205,26 +213,27 @@ def memory_stats():
 
         parts = line.split()
 
-        if len(parts) >= 2:
+        if len(parts) < 2:
 
-            key = parts[0].rstrip(":")
+            continue
 
-            try:
+        key = parts[0].rstrip(":")
 
-                value = int(parts[1])
+        try:
 
-                if len(parts) >= 3:
+            value = int(parts[1])
 
-                    if parts[2] == "kB":
+            if len(parts) >= 3:
 
-                        value *= 1024
+                if parts[2] == "kB":
 
-                values[key] = value
+                    value *= 1024
 
-            except ValueError:
+            values[key] = value
 
-                continue
+        except ValueError:
 
+            continue
 
     total = values.get(
         "MemTotal",
@@ -245,9 +254,9 @@ def memory_stats():
     )
 
     percent = (
-        (used / total) * 100
+        used / total * 100
         if total
-        else 0
+        else 0.0
     )
 
     return (
@@ -292,20 +301,18 @@ def load_average():
 
 
 # ============================================================
-#                        PROCESOS
+#                       PROCESOS
 # ============================================================
 
 def process_count():
 
     try:
 
-        return len([
-            item
-            for item in os.listdir(
-                "/proc"
-            )
+        return sum(
+            1
+            for item in os.listdir("/proc")
             if item.isdigit()
-        ])
+        )
 
     except Exception:
 
@@ -326,7 +333,6 @@ def get_processes():
 
         return processes
 
-
     for entry in entries:
 
         if not entry.isdigit():
@@ -335,88 +341,68 @@ def get_processes():
 
         pid = int(entry)
 
-        status_file = (
+        status_content = read_file(
             f"/proc/{pid}/status"
         )
 
-        stat_file = (
+        stat_content = read_file(
             f"/proc/{pid}/stat"
         )
 
+        if not status_content:
+
+            continue
 
         name = "?"
         status = "?"
-        user = "?"
         memory = 0
-
 
         # ----------------------------------------------------
         # STATUS
         # ----------------------------------------------------
 
-        status_content = read_file(
-            status_file
-        )
+        for line in status_content.splitlines():
 
-        if status_content:
+            if line.startswith("Name:"):
 
-            for line in status_content.splitlines():
+                name = line.split(
+                    ":",
+                    1
+                )[1].strip()
 
-                if line.startswith(
-                    "Name:"
-                ):
+            elif line.startswith("State:"):
 
-                    name = line.split(
-                        ":",
-                        1
-                    )[1].strip()
+                state = line.split(
+                    ":",
+                    1
+                )[1].strip()
 
+                if state:
 
-                elif line.startswith(
-                    "State:"
-                ):
+                    status = state[0]
 
-                    state = line.split(
-                        ":",
-                        1
-                    )[1].strip()
+            elif line.startswith("VmRSS:"):
 
-                    if state:
+                parts = line.split()
 
-                        status = (
-                            state[0]
+                if len(parts) >= 2:
+
+                    try:
+
+                        memory = (
+                            int(parts[1]) *
+                            1024
                         )
 
+                    except ValueError:
 
-                elif line.startswith(
-                    "VmRSS:"
-                ):
-
-                    parts = line.split()
-
-                    if len(parts) >= 2:
-
-                        try:
-
-                            memory = (
-                                int(parts[1])
-                                * 1024
-                            )
-
-                        except ValueError:
-
-                            pass
-
+                        pass
 
         # ----------------------------------------------------
-        # CPU
+        # CPU DEL PROCESO
         # ----------------------------------------------------
 
-        cpu = 0.0
-
-        stat_content = read_file(
-            stat_file
-        )
+        cpu_time = 0
 
         if stat_content:
 
@@ -424,16 +410,12 @@ def get_processes():
 
                 parts = stat_content.split()
 
-                utime = int(
-                    parts[13]
-                )
+                utime = int(parts[13])
+                stime = int(parts[14])
 
-                stime = int(
-                    parts[14]
-                )
-
-                cpu = float(
-                    utime + stime
+                cpu_time = (
+                    utime +
+                    stime
                 )
 
             except (
@@ -441,25 +423,79 @@ def get_processes():
                 ValueError
             ):
 
-                cpu = 0.0
+                cpu_time = 0
 
+        previous = _process_cpu.get(
+            pid
+        )
+
+        _process_cpu[pid] = (
+            cpu_time,
+            time.monotonic()
+        )
+
+        cpu = 0.0
+
+        if previous is not None:
+
+            previous_time, previous_stamp = (
+                previous
+            )
+
+            elapsed = (
+                time.monotonic() -
+                previous_stamp
+            )
+
+            delta = (
+                cpu_time -
+                previous_time
+            )
+
+            if elapsed > 0 and delta >= 0:
+
+                try:
+
+                    clock_ticks = os.sysconf(
+                        os.sysconf_names[
+                            "SC_CLK_TCK"
+                        ]
+                    )
+
+                except (
+                    ValueError,
+                    KeyError,
+                    OSError
+                ):
+
+                    clock_ticks = 100
+
+                cpu = (
+                    delta /
+                    clock_ticks /
+                    elapsed
+                ) * 100
 
         processes.append({
-
             "pid": pid,
-
             "name": name,
-
-            "user": user,
-
             "status": status,
-
             "cpu": cpu,
-
             "memory": memory
-
         })
 
+    # Limpiar procesos desaparecidos.
+
+    active_pids = {
+        process["pid"]
+        for process in processes
+    }
+
+    for pid in list(_process_cpu):
+
+        if pid not in active_pids:
+
+            del _process_cpu[pid]
 
     return processes
 
@@ -470,7 +506,8 @@ def get_processes():
 
 def show_processes(
     processes,
-    limit
+    limit,
+    width
 ):
 
     processes.sort(
@@ -481,33 +518,43 @@ def show_processes(
         reverse=True
     )
 
+    name_width = max(
+        15,
+        min(
+            32,
+            width - 42
+        )
+    )
 
     print(
         f"{'PID':>7} "
-        f"{'CPU':>9} "
+        f"{'CPU':>7} "
         f"{'MEM':>10} "
-        f"{'STATUS':<8} "
-        f"NAME"
+        f"{'S':<2} "
+        f"{'NAME':<{name_width}}"
     )
 
     print(
-        "-" * 65
+        "-" * min(
+            width,
+            7 + 1 + 7 + 1 + 10 + 1 + 2 + 1 + name_width
+        )
     )
-
 
     for process in processes[:limit]:
 
-        name = process["name"][:30]
+        name = process["name"][
+            :name_width
+        ]
 
-        status = process["status"][:7]
-
+        status = process["status"][:1]
 
         print(
             f"{process['pid']:>7} "
-            f"{process['cpu']:>8.0f} "
+            f"{process['cpu']:>6.1f}% "
             f"{format_bytes(process['memory']):>10} "
-            f"{status:<8} "
-            f"{name}"
+            f"{status:<2} "
+            f"{name:<{name_width}}"
         )
 
 
@@ -529,53 +576,49 @@ def draw():
 
     processes_count = process_count()
 
-
     width, height = terminal_size()
-
 
     print(
         f"LynaTop {APP_VERSION}"
-        f"   CPU: {cpu:5.1f}%"
-        f"   MEM: {memory_percent:5.1f}%"
     )
 
+    print(
+        f"CPU: {cpu:5.1f}%"
+        f"    RAM: {memory_percent:5.1f}%"
+    )
 
     print(
         f"RAM: {format_bytes(used)} / "
         f"{format_bytes(total)}"
     )
 
-
     print(
         f"Procesos: {processes_count}"
-        f"   Load: {load}"
+        f"    Load: {load}"
     )
 
-
     print()
-
 
     processes = get_processes()
 
-
     limit = max(
         5,
-        height - 10
+        height - 11
     )
-
 
     show_processes(
         processes,
-        limit
+        limit,
+        width
     )
-
 
     print()
 
     print(
-        "Q = salir | "
         "R = actualizar | "
-        "K <PID> = terminar"
+        "K <PID> = terminar | "
+        "H = ayuda | "
+        "Q = salir"
     )
 
 
@@ -597,11 +640,17 @@ def kill_process(pid):
 
         return
 
+    if pid <= 0:
+
+        print(
+            "PID inválido."
+        )
+
+        return
 
     process_path = (
         f"/proc/{pid}"
     )
-
 
     if not os.path.exists(
         process_path
@@ -613,21 +662,17 @@ def kill_process(pid):
 
         return
 
-
     name = "?"
 
     status = read_file(
         f"/proc/{pid}/status"
     )
 
-
     if status:
 
         for line in status.splitlines():
 
-            if line.startswith(
-                "Name:"
-            ):
+            if line.startswith("Name:"):
 
                 name = line.split(
                     ":",
@@ -636,19 +681,20 @@ def kill_process(pid):
 
                 break
 
-
     print()
 
     print(
-        f"⚠ Proceso: {name} "
-        f"(PID {pid})"
+        f"⚠ Proceso: {name}"
+        f" (PID {pid})"
     )
 
+    print(
+        "Esta acción enviará SIGTERM."
+    )
 
     confirmation = input(
         "¿Terminar proceso? [s/N]: "
     ).strip().lower()
-
 
     if confirmation not in (
         "s",
@@ -664,7 +710,6 @@ def kill_process(pid):
 
         return
 
-
     try:
 
         os.kill(
@@ -673,9 +718,8 @@ def kill_process(pid):
         )
 
         print(
-            "✓ Señal de terminación enviada."
+            "✓ Señal SIGTERM enviada."
         )
-
 
     except ProcessLookupError:
 
@@ -683,13 +727,11 @@ def kill_process(pid):
             "✗ El proceso ya no existe."
         )
 
-
     except PermissionError:
 
         print(
             "✗ Permiso denegado."
         )
-
 
     except Exception as error:
 
@@ -705,21 +747,29 @@ def kill_process(pid):
 def help_command():
 
     print("""
-LynaTop 0.3.1
+LynaTop 0.4
 
-Monitor de procesos de LynaOS.
+Monitor de rendimiento y procesos de LynaOS.
+
+Información:
+
+  • Uso global de CPU
+  • Uso de RAM
+  • RAM total y disponible
+  • Load average
+  • Número de procesos
+  • CPU individual de procesos
+  • Memoria individual de procesos
 
 Comandos:
 
-  R              Actualizar pantalla
+  R              Actualizar
   K <PID>        Terminar proceso
-  H              Ayuda
+  H              Mostrar ayuda
   Q              Salir
 
-LynaTop no requiere psutil.
-
-Funciona utilizando la interfaz
-/proc de Linux y Android/Termux.
+LynaTop utiliza /proc de Linux/Android
+y no necesita psutil.
 
 Ejemplo:
 
@@ -728,7 +778,26 @@ Ejemplo:
 
 
 # ============================================================
-#                           APP
+#                           VERSION
+# ============================================================
+
+def version_command():
+
+    print(
+        f"{APP_NAME} {APP_VERSION}"
+    )
+
+    print(
+        "Monitor de rendimiento de LynaOS"
+    )
+
+    print(
+        "Backend: /proc"
+    )
+
+
+# ============================================================
+#                            APP
 # ============================================================
 
 def run():
@@ -737,34 +806,28 @@ def run():
 
     time.sleep(1)
 
-
     while True:
 
         try:
 
             draw()
 
-
             command = input(
                 "\nlynatop> "
             ).strip()
-
 
             if not command:
 
                 continue
 
-
             parts = command.split()
 
-            action = (
-                parts[0].upper()
-            )
-
+            action = parts[0].upper()
 
             if action in (
                 "Q",
-                "EXIT"
+                "EXIT",
+                "QUIT"
             ):
 
                 print(
@@ -773,7 +836,6 @@ def run():
 
                 break
 
-
             elif action in (
                 "R",
                 "REFRESH"
@@ -781,11 +843,12 @@ def run():
 
                 continue
 
-
             elif action in (
                 "H",
                 "HELP"
             ):
+
+                clear()
 
                 help_command()
 
@@ -793,6 +856,18 @@ def run():
                     "\nENTER para continuar..."
                 )
 
+            elif action in (
+                "V",
+                "VERSION"
+            ):
+
+                clear()
+
+                version_command()
+
+                input(
+                    "\nENTER para continuar..."
+                )
 
             elif action == "K":
 
@@ -808,16 +883,13 @@ def run():
 
                     continue
 
-
                 kill_process(
                     parts[1]
                 )
 
-
                 input(
                     "\nENTER para continuar..."
                 )
-
 
             else:
 
@@ -829,20 +901,23 @@ def run():
                     "\nENTER para continuar..."
                 )
 
-
         except KeyboardInterrupt:
 
             print()
+            print(
+                "Saliendo de LynaTop..."
+            )
 
             break
-
 
         except EOFError:
 
             print()
+            print(
+                "Saliendo de LynaTop..."
+            )
 
             break
-
 
         except Exception as error:
 

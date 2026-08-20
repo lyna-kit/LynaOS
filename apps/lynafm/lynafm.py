@@ -11,26 +11,41 @@ from pathlib import Path
 
 
 APP_NAME = "LynaFM"
-APP_VERSION = "0.3"
+APP_VERSION = "0.4"
 
-LYNAOS_ROOT = Path(__file__).resolve().parents[2]
-MUSIC_DIR = LYNAOS_ROOT / "music"
+ROOT = Path(__file__).resolve().parents[2]
+
+MUSIC_DIR = ROOT / "music"
+DATA_DIR = ROOT / "data"
+PLAYLIST_FILE = DATA_DIR / "lynafm_playlist.json"
 
 playlist = []
 current_index = -1
 
 player = None
 ipc_socket = None
-playing = False
+ipc_path = None
+
+current_title = ""
+current_source = ""
+current_local = False
 
 
 # ============================================================
-#                         UTILIDADES
+# UTILIDADES
 # ============================================================
 
 def command_exists(command):
     return shutil.which(command) is not None
 
+
+def clear():
+    os.system("clear")
+
+
+# ============================================================
+# DEPENDENCIAS
+# ============================================================
 
 def check_dependencies():
 
@@ -50,103 +65,185 @@ def check_dependencies():
         )
 
         print()
-        print("Instala las dependencias con:")
 
         if "mpv" in missing:
+            print("Instala MPV con:")
             print("pkg install mpv")
 
         if "yt-dlp" in missing:
-            print("python -m pip install -U yt-dlp")
+            print("Instala yt-dlp con:")
+            print(
+                "python -m pip install -U yt-dlp"
+            )
 
         return False
 
     return True
 
 
-def create_ipc_path():
+# ============================================================
+# PERSISTENCIA
+# ============================================================
 
-    return str(
-        Path(tempfile.gettempdir())
-        / "lynafm-mpv.sock"
+def load_playlist():
+
+    global playlist
+
+    DATA_DIR.mkdir(
+        parents=True,
+        exist_ok=True
     )
+
+    if not PLAYLIST_FILE.exists():
+
+        playlist = []
+
+        return
+
+    try:
+
+        with open(
+            PLAYLIST_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            data = json.load(file)
+
+        if isinstance(data, list):
+
+            playlist = data
+
+        else:
+
+            playlist = []
+
+    except Exception:
+
+        playlist = []
+
+
+def save_playlist():
+
+    DATA_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    try:
+
+        with open(
+            PLAYLIST_FILE,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            json.dump(
+                playlist,
+                file,
+                ensure_ascii=False,
+                indent=2
+            )
+
+    except Exception as error:
+
+        print(
+            f"✗ Error guardando lista: {error}"
+        )
 
 
 # ============================================================
-#                         BANNER
+# BANNER
 # ============================================================
 
 def banner():
 
-    print(f"""
+    print(
+        f"""
 ╔══════════════════════════════════════╗
-║           {APP_NAME} {APP_VERSION}           ║
-║          Música de LynaOS           ║
+║             {APP_NAME} {APP_VERSION}             ║
+║          Música de LynaOS            ║
 ╚══════════════════════════════════════╝
+"""
+    )
 
-L <número> = Escuchar
-D <número> = Descargar
-P          = Play / Pause
-←          = Retroceder 10 segundos
-→          = Adelantar 10 segundos
-N          = Siguiente
-B          = Anterior
-LIST       = Lista
-ADD        = Añadir enlace de YouTube
-H          = Ayuda
-ABOUT      = Información
-CLEAR      = Limpiar pantalla
-Q          = Salir
-""")
+    if current_title:
+
+        print(
+            f"▶ Reproduciendo: {current_title}"
+        )
+
+        print()
 
 
 # ============================================================
-#                           AYUDA
+# AYUDA
 # ============================================================
 
 def help_command():
 
     print("""
-LynaFM 0.3
+LynaFM 0.4
 
-Comandos:
+LIST       Lista de enlaces
+LOCAL      Música descargada
+ADD        Añadir enlace
+DOWNLOAD   Descargar
 
-  L <número>       Escuchar canción
-  D <número>       Descargar canción
-  P                Play / Pause
-  ←                Retroceder 10 segundos
-  →                Adelantar 10 segundos
-  N                Siguiente
-  B                Anterior
-  LIST             Mostrar lista
-  ADD              Añadir enlace de YouTube
-  H                Ayuda
-  ABOUT            Información
-  CLEAR            Limpiar pantalla
-  Q                Salir
+L 1        Reproducir enlace #1
+M 1        Reproducir archivo local #1
 
-Ejemplos:
+N          Siguiente
+B          Anterior
+P          Pausa / reanudar
+S          Detener
+R          Reiniciar
 
-  ADD
-  LIST
-  L 1
-  P
-  →
-  ←
-  N
-  B
-  D 1
+←          -5 segundos
+→          +5 segundos
+
+REMOVE 1   Quitar canción
+CLEAR      Limpiar lista
+
+HELP       Ayuda
+Q          Salir
 """)
 
 
 # ============================================================
-#                       IPC DE MPV
+# IPC MPV
 # ============================================================
+
+def connect_ipc(path):
+
+    global ipc_socket
+
+    try:
+
+        sock = socket.socket(
+            socket.AF_UNIX,
+            socket.SOCK_STREAM
+        )
+
+        sock.connect(path)
+
+        ipc_socket = sock
+
+        return True
+
+    except Exception:
+
+        ipc_socket = None
+
+        return False
+
 
 def send_mpv(command):
 
     global ipc_socket
 
     if ipc_socket is None:
+
         return False
 
     try:
@@ -163,63 +260,164 @@ def send_mpv(command):
 
     except Exception:
 
-        return False
-
-
-def connect_ipc():
-
-    global ipc_socket
-
-    if ipc_socket is None:
-        return False
-
-    for _ in range(20):
-
         try:
-
-            sock = socket.socket(
-                socket.AF_UNIX,
-                socket.SOCK_STREAM
-            )
-
-            sock.connect(ipc_socket)
-
-            ipc_socket = sock
-
-            return True
-
+            ipc_socket.close()
         except Exception:
+            pass
 
-            time.sleep(0.1)
+        ipc_socket = None
 
-    return False
+        return False
 
 
 # ============================================================
-#                    DETENER REPRODUCTOR
+# ESTADO MPV
+# ============================================================
+
+def player_running():
+
+    return (
+        player is not None
+        and player.poll() is None
+    )
+
+
+# ============================================================
+# INICIAR MPV
+# ============================================================
+
+def start_mpv(
+    source,
+    title,
+    local=False
+):
+
+    global player
+    global ipc_socket
+    global ipc_path
+
+    global current_title
+    global current_source
+    global current_local
+
+    stop_player()
+
+    socket_path = (
+        Path(tempfile.gettempdir())
+        / f"lynafm-{os.getpid()}.sock"
+    )
+
+    try:
+
+        if socket_path.exists():
+
+            socket_path.unlink()
+
+    except Exception:
+        pass
+
+    ipc_path = str(socket_path)
+
+    try:
+
+        player = subprocess.Popen(
+            [
+                "mpv",
+                "--no-video",
+                "--force-window=no",
+                "--idle=no",
+                f"--input-ipc-server={ipc_path}",
+                source
+            ]
+        )
+
+    except Exception as error:
+
+        print(
+            f"✗ Error iniciando MPV: {error}"
+        )
+
+        player = None
+
+        return False
+
+    for _ in range(40):
+
+        if socket_path.exists():
+
+            break
+
+        if player.poll() is not None:
+
+            break
+
+        time.sleep(0.1)
+
+    if not socket_path.exists():
+
+        print(
+            "✗ MPV no creó el socket."
+        )
+
+        stop_player()
+
+        return False
+
+    if not connect_ipc(
+        str(socket_path)
+    ):
+
+        print(
+            "✗ No se pudo conectar con MPV."
+        )
+
+        stop_player()
+
+        return False
+
+    current_title = title
+    current_source = source
+    current_local = local
+
+    return True
+
+
+# ============================================================
+# DETENER MPV
 # ============================================================
 
 def stop_player():
 
     global player
     global ipc_socket
-    global playing
+    global ipc_path
 
-    if ipc_socket is not None:
+    global current_title
+    global current_source
+    global current_local
+
+    if ipc_socket:
 
         try:
+
             ipc_socket.close()
+
         except Exception:
             pass
 
     ipc_socket = None
 
-    if player is not None:
+    if player:
 
         try:
 
-            player.terminate()
-            player.wait(timeout=2)
+            if player.poll() is None:
+
+                player.terminate()
+
+                player.wait(
+                    timeout=2
+                )
 
         except Exception:
 
@@ -230,11 +428,29 @@ def stop_player():
                 pass
 
     player = None
-    playing = False
+
+    if ipc_path:
+
+        try:
+
+            path = Path(ipc_path)
+
+            if path.exists():
+
+                path.unlink()
+
+        except Exception:
+            pass
+
+    ipc_path = None
+
+    current_title = ""
+    current_source = ""
+    current_local = False
 
 
 # ============================================================
-#                     OBTENER AUDIO
+# OBTENER AUDIO DE YOUTUBE
 # ============================================================
 
 def get_audio_url(url):
@@ -277,33 +493,16 @@ def get_audio_url(url):
 
     if result.returncode != 0:
 
-        error = result.stderr.strip()
-
         print(
             "✗ yt-dlp no pudo obtener "
             "el audio."
         )
 
-        if "403" in error:
-
-            print()
-            print(
-                "HTTP 403: el servidor rechazó "
-                "la solicitud."
-            )
+        if result.stderr:
 
             print(
-                "Actualiza yt-dlp:"
+                result.stderr.strip()
             )
-
-            print(
-                "python -m pip install -U yt-dlp"
-            )
-
-        else:
-
-            if error:
-                print(error)
 
         return None
 
@@ -321,309 +520,7 @@ def get_audio_url(url):
 
 
 # ============================================================
-#                         REPRODUCIR
-# ============================================================
-
-def play_song(index):
-
-    global current_index
-    global player
-    global ipc_socket
-    global playing
-
-    if not playlist:
-
-        print(
-            "LynaFM: la lista está vacía."
-        )
-
-        return
-
-    if index < 0 or index >= len(playlist):
-
-        print(
-            "LynaFM: canción inexistente."
-        )
-
-        return
-
-    if not check_dependencies():
-
-        return
-
-    stop_player()
-
-    current_index = index
-
-    title, url = playlist[index]
-
-    print()
-    print(
-        f"▶ Escuchando: {title}"
-    )
-    print()
-
-    audio_url = get_audio_url(url)
-
-    if not audio_url:
-
-        return
-
-    socket_path = create_ipc_path()
-
-    try:
-
-        if os.path.exists(socket_path):
-
-            os.remove(socket_path)
-
-    except Exception:
-        pass
-
-    ipc_socket = socket_path
-
-    try:
-
-        player = subprocess.Popen(
-            [
-                "mpv",
-                "--no-video",
-                "--force-window=no",
-                "--idle=no",
-                f"--input-ipc-server={socket_path}",
-                audio_url
-            ]
-        )
-
-    except Exception as error:
-
-        print(
-            f"LynaFM: error iniciando mpv: {error}"
-        )
-
-        ipc_socket = None
-        player = None
-
-        return
-
-    # Esperar a que mpv cree el socket.
-
-    socket_path_value = socket_path
-
-    ipc_socket = None
-
-    for _ in range(30):
-
-        if os.path.exists(
-            socket_path_value
-        ):
-
-            break
-
-        time.sleep(0.1)
-
-    if not os.path.exists(
-        socket_path_value
-    ):
-
-        print(
-            "✗ No se pudo iniciar el "
-            "control de mpv."
-        )
-
-        stop_player()
-
-        return
-
-    try:
-
-        sock = socket.socket(
-            socket.AF_UNIX,
-            socket.SOCK_STREAM
-        )
-
-        sock.connect(
-            socket_path_value
-        )
-
-        ipc_socket = sock
-
-    except Exception as error:
-
-        print(
-            f"✗ Error conectando con mpv: {error}"
-        )
-
-        stop_player()
-
-        return
-
-    playing = True
-
-
-# ============================================================
-#                       PLAY / PAUSE
-# ============================================================
-
-def toggle_play():
-
-    global playing
-
-    if player is None:
-
-        if current_index >= 0:
-
-            play_song(current_index)
-
-        elif playlist:
-
-            play_song(0)
-
-        else:
-
-            print(
-                "LynaFM: no hay canciones."
-            )
-
-        return
-
-    if send_mpv([
-        "cycle",
-        "pause"
-    ]):
-
-        playing = not playing
-
-        if playing:
-            print("▶ Reproduciendo.")
-        else:
-            print("⏸ Pausado.")
-
-    else:
-
-        print(
-            "✗ No se pudo controlar mpv."
-        )
-
-
-# ============================================================
-#                         ADELANTAR
-# ============================================================
-
-def forward():
-
-    if player is None:
-
-        print(
-            "LynaFM: no hay reproducción."
-        )
-
-        return
-
-    if send_mpv([
-        "seek",
-        10,
-        "relative"
-    ]):
-
-        print(
-            "→ +10 segundos."
-        )
-
-    else:
-
-        print(
-            "✗ No se pudo adelantar."
-        )
-
-
-# ============================================================
-#                         RETROCEDER
-# ============================================================
-
-def backward():
-
-    if player is None:
-
-        print(
-            "LynaFM: no hay reproducción."
-        )
-
-        return
-
-    if send_mpv([
-        "seek",
-        -10,
-        "relative"
-    ]):
-
-        print(
-            "← -10 segundos."
-        )
-
-    else:
-
-        print(
-            "✗ No se pudo retroceder."
-        )
-
-
-# ============================================================
-#                          SIGUIENTE
-# ============================================================
-
-def next_song():
-
-    if not playlist:
-
-        print(
-            "LynaFM: la lista está vacía."
-        )
-
-        return
-
-    next_index = current_index + 1
-
-    if next_index >= len(playlist):
-
-        print(
-            "LynaFM: no hay siguiente canción."
-        )
-
-        return
-
-    play_song(next_index)
-
-
-# ============================================================
-#                          ANTERIOR
-# ============================================================
-
-def previous_song():
-
-    if not playlist:
-
-        print(
-            "LynaFM: la lista está vacía."
-        )
-
-        return
-
-    previous_index = current_index - 1
-
-    if previous_index < 0:
-
-        print(
-            "LynaFM: no hay canción anterior."
-        )
-
-        return
-
-    play_song(previous_index)
-
-
-# ============================================================
-#                           LISTA
+# LISTA DE ENLACES
 # ============================================================
 
 def show_list():
@@ -631,7 +528,7 @@ def show_list():
     if not playlist:
 
         print(
-            "LynaFM: la lista está vacía."
+            "No hay enlaces guardados."
         )
 
         return
@@ -647,19 +544,96 @@ def show_list():
         start=1
     ):
 
-        title = item[0]
+        title = item.get(
+            "title",
+            "Sin título"
+        )
 
-        marker = "▶" if (
-            index - 1 == current_index
-        ) else " "
+        marker = (
+            "▶ "
+            if index - 1 == current_index
+            else "  "
+        )
 
         print(
-            f"{marker} {index}. {title}"
+            f"{marker}{index}. {title}"
         )
 
 
 # ============================================================
-#                           AÑADIR
+# MÚSICA LOCAL
+# ============================================================
+
+def get_local_files():
+
+    if not MUSIC_DIR.exists():
+
+        return []
+
+    extensions = {
+        ".mp3",
+        ".m4a",
+        ".opus",
+        ".ogg",
+        ".wav",
+        ".flac",
+        ".aac",
+        ".webm"
+    }
+
+    files = []
+
+    for file in MUSIC_DIR.iterdir():
+
+        if (
+            file.is_file()
+            and file.suffix.lower()
+            in extensions
+        ):
+
+            files.append(file)
+
+    return sorted(
+        files,
+        key=lambda file:
+        file.name.lower()
+    )
+
+
+def show_local():
+
+    files = get_local_files()
+
+    if not files:
+
+        print(
+            "No hay música descargada."
+        )
+
+        print(
+            f"Directorio: {MUSIC_DIR}"
+        )
+
+        return
+
+    print("""
+╔══════════════════════════════════════╗
+║          MÚSICA DESCARGADA           ║
+╚══════════════════════════════════════╝
+""")
+
+    for index, file in enumerate(
+        files,
+        start=1
+    ):
+
+        print(
+            f"{index}. {file.name}"
+        )
+
+
+# ============================================================
+# AÑADIR ENLACE
 # ============================================================
 
 def add_song():
@@ -671,7 +645,7 @@ def add_song():
     if not title:
 
         print(
-            "LynaFM: nombre inválido."
+            "Nombre inválido."
         )
 
         return
@@ -680,24 +654,24 @@ def add_song():
         "URL de YouTube> "
     ).strip()
 
-    if not (
-        "youtube.com/" in url
-        or "youtu.be/" in url
+    if (
+        "youtube.com/" not in url
+        and "youtu.be/" not in url
     ):
 
         print(
-            "LynaFM: solamente se aceptan "
-            "enlaces de YouTube."
+            "Solo se aceptan enlaces "
+            "de YouTube."
         )
 
         return
 
-    playlist.append(
-        (
-            title,
-            url
-        )
-    )
+    playlist.append({
+        "title": title,
+        "url": url
+    })
+
+    save_playlist()
 
     print(
         f"✓ Añadida: {title}"
@@ -705,15 +679,17 @@ def add_song():
 
 
 # ============================================================
-#                         DESCARGAR
+# REPRODUCIR ENLACE
 # ============================================================
 
-def download_song(index):
+def play_song(index):
+
+    global current_index
 
     if not playlist:
 
         print(
-            "LynaFM: la lista está vacía."
+            "La lista está vacía."
         )
 
         return
@@ -721,7 +697,315 @@ def download_song(index):
     if index < 0 or index >= len(playlist):
 
         print(
-            "LynaFM: canción inexistente."
+            "Canción inexistente."
+        )
+
+        return
+
+    if not check_dependencies():
+
+        return
+
+    item = playlist[index]
+
+    title = item.get(
+        "title",
+        "Sin título"
+    )
+
+    url = item.get(
+        "url",
+        ""
+    )
+
+    audio_url = get_audio_url(
+        url
+    )
+
+    if not audio_url:
+
+        return
+
+    if start_mpv(
+        audio_url,
+        title,
+        False
+    ):
+
+        current_index = index
+
+        print()
+        print(
+            f"▶ Reproduciendo: {title}"
+        )
+
+
+# ============================================================
+# REPRODUCIR LOCAL
+# ============================================================
+
+def play_local(index):
+
+    files = get_local_files()
+
+    if not files:
+
+        print(
+            "No hay música descargada."
+        )
+
+        return
+
+    if index < 0 or index >= len(files):
+
+        print(
+            "Archivo inexistente."
+        )
+
+        return
+
+    file = files[index]
+
+    if not command_exists("mpv"):
+
+        print(
+            "MPV no está instalado."
+        )
+
+        return
+
+    if start_mpv(
+        str(file),
+        file.name,
+        True
+    ):
+
+        print()
+        print(
+            f"▶ Reproduciendo: {file.name}"
+        )
+
+
+# ============================================================
+# PLAY / PAUSE
+# ============================================================
+
+def toggle_pause():
+
+    if not player_running():
+
+        print(
+            "No hay reproducción."
+        )
+
+        return
+
+    if send_mpv([
+        "cycle",
+        "pause"
+    ]):
+
+        print(
+            "✓ Pausa / reproducción cambiada."
+        )
+
+    else:
+
+        print(
+            "✗ No se pudo controlar MPV."
+        )
+
+
+# ============================================================
+# DETENER
+# ============================================================
+
+def stop():
+
+    if not player_running():
+
+        print(
+            "No hay reproducción."
+        )
+
+        return
+
+    stop_player()
+
+    print(
+        "■ Reproducción detenida."
+    )
+
+
+# ============================================================
+# REINICIAR
+# ============================================================
+
+def restart_song():
+
+    if not player_running():
+
+        print(
+            "No hay reproducción."
+        )
+
+        return
+
+    if send_mpv([
+        "set",
+        "time-pos",
+        0
+    ]):
+
+        print(
+            "↻ Canción reiniciada."
+        )
+
+    else:
+
+        print(
+            "✗ No se pudo reiniciar."
+        )
+
+
+# ============================================================
+# ADELANTAR 5 SEGUNDOS
+# ============================================================
+
+def forward():
+
+    if not player_running():
+
+        print(
+            "No hay reproducción."
+        )
+
+        return
+
+    if send_mpv([
+        "seek",
+        5,
+        "relative"
+    ]):
+
+        print(
+            "→ +5 segundos."
+        )
+
+    else:
+
+        print(
+            "✗ No se pudo adelantar."
+        )
+
+
+# ============================================================
+# RETROCEDER 5 SEGUNDOS
+# ============================================================
+
+def backward():
+
+    if not player_running():
+
+        print(
+            "No hay reproducción."
+        )
+
+        return
+
+    if send_mpv([
+        "seek",
+        -5,
+        "relative"
+    ]):
+
+        print(
+            "← -5 segundos."
+        )
+
+    else:
+
+        print(
+            "✗ No se pudo retroceder."
+        )
+
+
+# ============================================================
+# SIGUIENTE
+# ============================================================
+
+def next_song():
+
+    if not playlist:
+
+        print(
+            "La lista está vacía."
+        )
+
+        return
+
+    next_index = current_index + 1
+
+    if next_index >= len(playlist):
+
+        print(
+            "No hay siguiente canción."
+        )
+
+        return
+
+    play_song(
+        next_index
+    )
+
+
+# ============================================================
+# ANTERIOR
+# ============================================================
+
+def previous_song():
+
+    if not playlist:
+
+        print(
+            "La lista está vacía."
+        )
+
+        return
+
+    previous_index = current_index - 1
+
+    if previous_index < 0:
+
+        print(
+            "No hay canción anterior."
+        )
+
+        return
+
+    play_song(
+        previous_index
+    )
+
+
+# ============================================================
+# DESCARGAR
+# ============================================================
+
+def download_song(index):
+
+    if not playlist:
+
+        print(
+            "La lista está vacía."
+        )
+
+        return
+
+    if index < 0 or index >= len(playlist):
+
+        print(
+            "Canción inexistente."
         )
 
         return
@@ -729,11 +1013,7 @@ def download_song(index):
     if not command_exists("yt-dlp"):
 
         print(
-            "LynaFM: yt-dlp no está instalado."
-        )
-
-        print(
-            "python -m pip install -U yt-dlp"
+            "yt-dlp no está instalado."
         )
 
         return
@@ -743,7 +1023,17 @@ def download_song(index):
         exist_ok=True
     )
 
-    title, url = playlist[index]
+    item = playlist[index]
+
+    title = item.get(
+        "title",
+        "Sin título"
+    )
+
+    url = item.get(
+        "url",
+        ""
+    )
 
     print()
     print(
@@ -751,84 +1041,403 @@ def download_song(index):
     )
 
     output = str(
-        MUSIC_DIR / "%(title)s.%(ext)s"
+        MUSIC_DIR /
+        "%(title)s.%(ext)s"
     )
 
-    try:
+    result = subprocess.run(
+        [
+            "yt-dlp",
+            "--no-playlist",
+            "-x",
+            "--audio-format",
+            "mp3",
+            "-o",
+            output,
+            url
+        ],
+        check=False
+    )
 
-        result = subprocess.run(
-            [
-                "yt-dlp",
-                "--no-playlist",
-                "-x",
-                "--audio-format",
-                "mp3",
-                "-o",
-                output,
-                url
-            ],
-            check=False
+    if result.returncode == 0:
+
+        print()
+        print(
+            "✓ Descarga completada."
         )
 
-        if result.returncode == 0:
+    else:
 
-            print()
-            print(
-                f"✓ Guardado en: {MUSIC_DIR}"
-            )
+        print()
+        print(
+            "✗ La descarga no se pudo completar."
+        )
 
-        else:
 
-            print()
-            print(
-                "✗ La descarga no se pudo completar."
-            )
+# ============================================================
+# REMOVE
+# ============================================================
 
-    except Exception as error:
+def remove_song(index):
+
+    if index < 0 or index >= len(playlist):
 
         print(
-            f"LynaFM: error de descarga: {error}"
+            "Canción inexistente."
         )
 
+        return
 
-# ============================================================
-#                           ABOUT
-# ============================================================
+    item = playlist.pop(
+        index
+    )
 
-def about():
+    save_playlist()
 
-    print(f"""
-{APP_NAME} {APP_VERSION}
-
-Reproductor musical de LynaOS.
-
-Fuente:
-  YouTube
-
-Motor:
-  mpv + yt-dlp
-
-Funciones:
-  • Reproducción
-  • Descarga de audio
-  • Playlist
-  • Play / Pause
-  • Adelantar
-  • Retroceder
-  • Siguiente / Anterior
-
-Música descargada:
-  {MUSIC_DIR}
-""")
+    print(
+        "✓ Eliminada: "
+        + item.get(
+            "title",
+            "Sin título"
+        )
+    )
 
 
 # ============================================================
-#                           APP
+# CLEAR
+# ============================================================
+
+def clear_playlist():
+
+    playlist.clear()
+
+    save_playlist()
+
+    print(
+        "✓ Lista limpiada."
+    )
+
+
+# ============================================================
+# PROCESAR COMANDOS
+# ============================================================
+
+def process_command(command):
+
+    global current_index
+
+    parts = command.strip().split()
+
+    if not parts:
+
+        return True
+
+    action = parts[0].upper()
+
+    # --------------------------------------------------------
+    # SALIR
+    # --------------------------------------------------------
+
+    if action in (
+        "Q",
+        "EXIT"
+    ):
+
+        stop_player()
+
+        print(
+            "Saliendo de LynaFM..."
+        )
+
+        return False
+
+    # --------------------------------------------------------
+    # AYUDA
+    # --------------------------------------------------------
+
+    if action in (
+        "HELP",
+        "H"
+    ):
+
+        help_command()
+
+        return True
+
+    # --------------------------------------------------------
+    # LISTA
+    # --------------------------------------------------------
+
+    if action == "LIST":
+
+        show_list()
+
+        return True
+
+    # --------------------------------------------------------
+    # LOCAL
+    # --------------------------------------------------------
+
+    if action == "LOCAL":
+
+        show_local()
+
+        return True
+
+    # --------------------------------------------------------
+    # ADD
+    # --------------------------------------------------------
+
+    if action == "ADD":
+
+        add_song()
+
+        return True
+
+    # --------------------------------------------------------
+    # DOWNLOAD
+    # --------------------------------------------------------
+
+    if action == "DOWNLOAD":
+
+        if len(parts) != 2:
+
+            print(
+                "Uso: DOWNLOAD <número>"
+            )
+
+            return True
+
+        try:
+
+            index = int(parts[1]) - 1
+
+        except ValueError:
+
+            print(
+                "Número inválido."
+            )
+
+            return True
+
+        download_song(index)
+
+        return True
+
+    # --------------------------------------------------------
+    # LISTEN
+    # --------------------------------------------------------
+
+    if action == "L":
+
+        if len(parts) != 2:
+
+            print(
+                "Uso: L <número>"
+            )
+
+            return True
+
+        try:
+
+            index = int(parts[1]) - 1
+
+        except ValueError:
+
+            print(
+                "Número inválido."
+            )
+
+            return True
+
+        play_song(index)
+
+        return True
+
+    # --------------------------------------------------------
+    # LOCAL PLAY
+    # --------------------------------------------------------
+
+    if action == "M":
+
+        if len(parts) != 2:
+
+            print(
+                "Uso: M <número>"
+            )
+
+            return True
+
+        try:
+
+            index = int(parts[1]) - 1
+
+        except ValueError:
+
+            print(
+                "Número inválido."
+            )
+
+            return True
+
+        play_local(index)
+
+        return True
+
+    # --------------------------------------------------------
+    # SIGUIENTE
+    # --------------------------------------------------------
+
+    if action == "N":
+
+        next_song()
+
+        return True
+
+    # --------------------------------------------------------
+    # ANTERIOR
+    # --------------------------------------------------------
+
+    if action == "B":
+
+        previous_song()
+
+        return True
+
+    # --------------------------------------------------------
+    # PAUSA
+    # --------------------------------------------------------
+
+    if action == "P":
+
+        toggle_pause()
+
+        return True
+
+    # --------------------------------------------------------
+    # STOP
+    # --------------------------------------------------------
+
+    if action == "S":
+
+        stop()
+
+        return True
+
+    # --------------------------------------------------------
+    # RESTART
+    # --------------------------------------------------------
+
+    if action == "R":
+
+        restart_song()
+
+        return True
+
+    # --------------------------------------------------------
+    # FLECHA DERECHA
+    # --------------------------------------------------------
+
+    if command == "→":
+
+        forward()
+
+        return True
+
+    # --------------------------------------------------------
+    # FLECHA IZQUIERDA
+    # --------------------------------------------------------
+
+    if command == "←":
+
+        backward()
+
+        return True
+
+    # --------------------------------------------------------
+    # REMOVE
+    # --------------------------------------------------------
+
+    if action == "REMOVE":
+
+        if len(parts) != 2:
+
+            print(
+                "Uso: REMOVE <número>"
+            )
+
+            return True
+
+        try:
+
+            index = int(parts[1]) - 1
+
+        except ValueError:
+
+            print(
+                "Número inválido."
+            )
+
+            return True
+
+        remove_song(index)
+
+        return True
+
+    # --------------------------------------------------------
+    # CLEAR
+    # --------------------------------------------------------
+
+    if action == "CLEAR":
+
+        clear_playlist()
+
+        return True
+
+    # --------------------------------------------------------
+    # CLEAR SCREEN
+    # --------------------------------------------------------
+
+    if action == "CLS":
+
+        clear()
+
+        return True
+
+    # --------------------------------------------------------
+    # DESCONOCIDO
+    # --------------------------------------------------------
+
+    print(
+        "Comando desconocido."
+    )
+
+    print(
+        "Escribe HELP para ver los comandos."
+    )
+
+    return True
+
+
+# ============================================================
+# MAIN
 # ============================================================
 
 def run():
 
+    global current_index
+
+    load_playlist()
+
+    clear()
+
     banner()
+
+    print(
+        "Escribe HELP para ver los comandos."
+    )
+
+    print()
 
     while True:
 
@@ -836,180 +1445,23 @@ def run():
 
             command = input(
                 "lynafm> "
-            ).strip()
+            )
 
-            if not command:
-                continue
-
-            upper = command.upper()
-
-            # ------------------------------------------------
-            # SALIR
-            # ------------------------------------------------
-
-            if upper in ("Q", "EXIT"):
-
-                stop_player()
-
-                print(
-                    "Saliendo de LynaFM..."
-                )
+            if not process_command(
+                command
+            ):
 
                 break
 
-            # ------------------------------------------------
-            # AYUDA
-            # ------------------------------------------------
-
-            elif upper in ("H", "HELP"):
-
-                help_command()
-
-            # ------------------------------------------------
-            # ABOUT
-            # ------------------------------------------------
-
-            elif upper == "ABOUT":
-
-                about()
-
-            # ------------------------------------------------
-            # CLEAR
-            # ------------------------------------------------
-
-            elif upper == "CLEAR":
-
-                os.system("clear")
-
-            # ------------------------------------------------
-            # PLAY / PAUSE
-            # ------------------------------------------------
-
-            elif upper == "P":
-
-                toggle_play()
-
-            # ------------------------------------------------
-            # SIGUIENTE
-            # ------------------------------------------------
-
-            elif upper == "N":
-
-                next_song()
-
-            # ------------------------------------------------
-            # ANTERIOR
-            # ------------------------------------------------
-
-            elif upper == "B":
-
-                previous_song()
-
-            # ------------------------------------------------
-            # ADELANTAR
-            # ------------------------------------------------
-
-            elif command == "→":
-
-                forward()
-
-            # ------------------------------------------------
-            # RETROCEDER
-            # ------------------------------------------------
-
-            elif command == "←":
-
-                backward()
-
-            # ------------------------------------------------
-            # LIST
-            # ------------------------------------------------
-
-            elif upper == "LIST":
-
-                show_list()
-
-            # ------------------------------------------------
-            # ADD
-            # ------------------------------------------------
-
-            elif upper == "ADD":
-
-                add_song()
-
-            # ------------------------------------------------
-            # LISTEN
-            # ------------------------------------------------
-
-            elif upper.startswith("L"):
-
-                parts = command.split()
-
-                if len(parts) < 2:
-
-                    print(
-                        "Uso: L <número>"
-                    )
-
-                    continue
-
-                try:
-
-                    index = int(
-                        parts[1]
-                    ) - 1
-
-                    play_song(index)
-
-                except ValueError:
-
-                    print(
-                        "Número inválido."
-                    )
-
-            # ------------------------------------------------
-            # DOWNLOAD
-            # ------------------------------------------------
-
-            elif upper.startswith("D"):
-
-                parts = command.split()
-
-                if len(parts) < 2:
-
-                    print(
-                        "Uso: D <número>"
-                    )
-
-                    continue
-
-                try:
-
-                    index = int(
-                        parts[1]
-                    ) - 1
-
-                    download_song(index)
-
-                except ValueError:
-
-                    print(
-                        "Número inválido."
-                    )
-
-            else:
-
-                print(
-                    "Comando desconocido."
-                )
-
-                print(
-                    "Escribe H para ver la ayuda."
-                )
+            print()
 
         except KeyboardInterrupt:
 
-            stop_player()
+            print()
+
+            print(
+                "Usa Q para salir de LynaFM."
+            )
 
             print()
 
@@ -1017,12 +1469,15 @@ def run():
 
             stop_player()
 
+            print()
+
             break
 
 
 # ============================================================
-#                            MAIN
+# START
 # ============================================================
 
 if __name__ == "__main__":
+
     run()

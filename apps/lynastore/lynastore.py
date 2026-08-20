@@ -6,7 +6,7 @@ import subprocess
 
 
 APP_NAME = "LynaStore"
-APP_VERSION = "0.3"
+APP_VERSION = "0.4"
 
 
 # ============================================================
@@ -22,7 +22,7 @@ def run_command(command):
 
     try:
 
-        subprocess.run(
+        return subprocess.run(
             command,
             check=False
         )
@@ -32,11 +32,30 @@ def run_command(command):
         print()
         print("Operación cancelada.")
 
+        return None
+
     except Exception as error:
 
         print(
             f"✗ Error: {error}"
         )
+
+        return None
+
+
+def confirm(message):
+
+    answer = input(
+        f"{message} [s/N]: "
+    ).strip().lower()
+
+    return answer in (
+        "s",
+        "si",
+        "sí",
+        "y",
+        "yes"
+    )
 
 
 # ============================================================
@@ -45,16 +64,17 @@ def run_command(command):
 
 def banner():
 
-    print("""
+    print(f"""
 ╔══════════════════════════════════════╗
-║           LynaStore 0.3              ║
-║       Gestor de paquetes             ║
+║          LynaStore {APP_VERSION}             ║
+║       Gestor de paquetes LynaOS      ║
 ╚══════════════════════════════════════╝
 
 Compatible con:
 
   • pkg
   • apt
+  • Python / pip
 """)
 
 
@@ -64,24 +84,36 @@ Compatible con:
 
 def help_command():
 
-    print("""
-LynaStore 0.3
+    print(f"""
+LynaStore {APP_VERSION}
 
-Comandos:
+Gestión de paquetes:
 
-  I <paquete>       Instalar paquete
+  I <paquete>       Instalar automáticamente
   U <paquete>       Desinstalar paquete
   S <paquete>       Buscar paquete
+
   P <paquete>       Instalar mediante pkg
   A <paquete>       Instalar mediante apt
 
+Python:
+
+  PY <paquete>      Instalar paquete con pip
+  PYU               Actualizar paquetes de pip
+
+Sistema:
+
   UPDATE            Actualizar índices
   UPGRADE           Actualizar paquetes
+  SYSUP             Actualizar todo
+
+Información:
 
   INFO              Información del sistema
-  H                 Ayuda
   CLEAR             Limpiar pantalla
+  H                 Ayuda
   Q                 Salir
+
 
 Ejemplos:
 
@@ -89,13 +121,21 @@ Ejemplos:
   I python
   P git
   A curl
+
+  PY requests
+  PY psutil
+  PY yt-dlp
+
+  PYU
+
   UPDATE
   UPGRADE
+  SYSUP
 """)
 
 
 # ============================================================
-#                         DETECTAR GESTOR
+#                    DETECTAR GESTOR
 # ============================================================
 
 def detect_package_manager():
@@ -195,16 +235,8 @@ def uninstall_package(package):
         f"⚠ Vas a desinstalar: {package}"
     )
 
-    confirmation = input(
-        "¿Continuar? [s/N]: "
-    ).strip().lower()
-
-    if confirmation not in (
-        "s",
-        "si",
-        "sí",
-        "y",
-        "yes"
+    if not confirm(
+        "¿Continuar?"
     ):
 
         print(
@@ -290,7 +322,154 @@ def search_package(package):
 
 
 # ============================================================
-#                         ACTUALIZAR
+#                       PYTHON / PIP
+# ============================================================
+
+def python_available():
+
+    return (
+        command_exists("python")
+        or command_exists("python3")
+    )
+
+
+def python_command():
+
+    if command_exists("python"):
+
+        return "python"
+
+    if command_exists("python3"):
+
+        return "python3"
+
+    return None
+
+
+def pip_install(package):
+
+    python = python_command()
+
+    if python is None:
+
+        print(
+            "✗ Python no está instalado."
+        )
+
+        print(
+            "Instálalo con:"
+        )
+
+        print(
+            "pkg install python"
+        )
+
+        return
+
+    print()
+    print(
+        f"🐍 Instalando {package} con pip..."
+    )
+    print()
+
+    run_command(
+        [
+            python,
+            "-m",
+            "pip",
+            "install",
+            package
+        ]
+    )
+
+
+def pip_upgrade():
+
+    python = python_command()
+
+    if python is None:
+
+        print(
+            "✗ Python no está instalado."
+        )
+
+        return
+
+    print()
+    print(
+        "🐍 Comprobando paquetes Python..."
+    )
+    print()
+
+    result = run_command(
+        [
+            python,
+            "-m",
+            "pip",
+            "list",
+            "--outdated"
+        ]
+    )
+
+    if result is None:
+        return
+
+    print()
+
+    if result.returncode != 0:
+
+        print(
+            "✗ No se pudo consultar pip."
+        )
+
+        return
+
+    print(
+        "⬆ Actualizando paquetes Python..."
+    )
+    print()
+
+    run_command(
+        [
+            python,
+            "-m",
+            "pip",
+            "list",
+            "--outdated",
+            "--format=freeze"
+        ]
+    )
+
+    print()
+
+    print(
+        "Para actualizar un paquete concreto:"
+    )
+
+    print(
+        "PY <paquete>"
+    )
+
+    print()
+
+    print(
+        "Actualizando pip..."
+    )
+
+    run_command(
+        [
+            python,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "pip"
+        ]
+    )
+
+
+# ============================================================
+#                         UPDATE
 # ============================================================
 
 def update_packages():
@@ -331,7 +510,7 @@ def update_packages():
 
 
 # ============================================================
-#                          UPGRADE
+#                         UPGRADE
 # ============================================================
 
 def upgrade_packages():
@@ -348,7 +527,7 @@ def upgrade_packages():
 
     print()
     print(
-        "⬆ Actualizando paquetes..."
+        "⬆ Actualizando paquetes del sistema..."
     )
     print()
 
@@ -374,6 +553,44 @@ def upgrade_packages():
 
 
 # ============================================================
+#                         SYSUP
+# ============================================================
+
+def system_upgrade():
+
+    print("""
+╔══════════════════════════════════════╗
+║       Actualización de LynaOS        ║
+╚══════════════════════════════════════╝
+""")
+
+    print(
+        "Paso 1/3: Actualizando índices..."
+    )
+
+    update_packages()
+
+    print()
+    print(
+        "Paso 2/3: Actualizando paquetes..."
+    )
+
+    upgrade_packages()
+
+    print()
+    print(
+        "Paso 3/3: Actualizando Python..."
+    )
+
+    pip_upgrade()
+
+    print()
+    print(
+        "✓ Actualización del sistema finalizada."
+    )
+
+
+# ============================================================
 #                           INFO
 # ============================================================
 
@@ -388,7 +605,7 @@ def system_info():
 """)
 
     print(
-        f"LynaStore:       {APP_VERSION}"
+        f"LynaStore:        {APP_VERSION}"
     )
 
     if manager:
@@ -404,19 +621,28 @@ def system_info():
         )
 
     print(
-        f"pkg disponible:   {'Sí' if command_exists('pkg') else 'No'}"
+        f"pkg disponible:    "
+        f"{'Sí' if command_exists('pkg') else 'No'}"
     )
 
     print(
-        f"apt disponible:   {'Sí' if command_exists('apt') else 'No'}"
+        f"apt disponible:    "
+        f"{'Sí' if command_exists('apt') else 'No'}"
     )
 
     print(
-        f"python disponible: {'Sí' if command_exists('python') else 'No'}"
+        f"python disponible: "
+        f"{'Sí' if python_available() else 'No'}"
     )
 
     print(
-        f"git disponible:    {'Sí' if command_exists('git') else 'No'}"
+        f"git disponible:    "
+        f"{'Sí' if command_exists('git') else 'No'}"
+    )
+
+    print(
+        f"pip disponible:    "
+        f"{'Sí' if python_available() else 'No'}"
     )
 
 
@@ -439,7 +665,6 @@ def run():
         except KeyboardInterrupt:
 
             print()
-
             print(
                 "Saliendo de LynaStore..."
             )
@@ -449,7 +674,6 @@ def run():
         except EOFError:
 
             print()
-
             break
 
         if not command:
@@ -528,7 +752,7 @@ def run():
             )
 
         # ----------------------------------------------------
-        # SEARCH
+        # BUSCAR
         # ----------------------------------------------------
 
         elif action in (
@@ -587,6 +811,35 @@ def run():
             )
 
         # ----------------------------------------------------
+        # PYTHON / PIP
+        # ----------------------------------------------------
+
+        elif action in (
+            "PY",
+            "PIP"
+        ):
+
+            if len(parts) < 2:
+
+                print(
+                    "Uso: PY <paquete>"
+                )
+
+                continue
+
+            pip_install(
+                " ".join(parts[1:])
+            )
+
+        # ----------------------------------------------------
+        # PYU
+        # ----------------------------------------------------
+
+        elif action == "PYU":
+
+            pip_upgrade()
+
+        # ----------------------------------------------------
         # UPDATE
         # ----------------------------------------------------
 
@@ -601,6 +854,17 @@ def run():
         elif action == "UPGRADE":
 
             upgrade_packages()
+
+        # ----------------------------------------------------
+        # SYSUP
+        # ----------------------------------------------------
+
+        elif action in (
+            "SYSUP",
+            "FULLUPGRADE"
+        ):
+
+            system_upgrade()
 
         # ----------------------------------------------------
         # INFO

@@ -7,22 +7,22 @@ from pathlib import Path
 
 
 # ============================================================
-#                         LynaOS 0.3.1
+#                         LynaOS 0.4
 # ============================================================
 
 APP_NAME = "LynaOS"
-VERSION = "0.3.1"
+VERSION = "0.4"
 
 ROOT = Path(__file__).resolve().parent
 APPS_DIR = ROOT / "apps"
 
 
 # ============================================================
-#                         APLICACIONES
+#                       APLICACIONES
 # ============================================================
 
 APPLICATIONS = {
-    "1": ("LynaCalc", "lynacalc", "main.py"),
+    "1": ("LynaCalc", "lynacalc", "lynacalc.py"),
     "2": ("LynaFiles", "lynafiles", "lynafiles.py"),
     "3": ("LynaFM", "lynafm", "lynafm.py"),
     "4": ("LynaSettings", "lynasettings", "lynasettings.py"),
@@ -44,7 +44,7 @@ def banner():
 
     print("""
 ╔══════════════════════════════════════╗
-║           LynaOS 0.3.1               ║
+║             LynaOS 0.4               ║
 ║       Sistema operativo LynaOS       ║
 ╚══════════════════════════════════════╝
 """)
@@ -83,26 +83,60 @@ def menu():
 
 def system_info():
 
-    print(f"""
+    print("""
 ╔══════════════════════════════════════╗
 ║          Información LynaOS          ║
 ╚══════════════════════════════════════╝
-
-Sistema:       {APP_NAME}
-Versión:       {VERSION}
-Directorio:    {ROOT}
-Aplicaciones:  {len(APPLICATIONS)}
-
-Python:        {sys.version.split()[0]}
-
-Nuevas herramientas:
-
-  LynaTop       0.3.1
-  Lysh          0.1
-
-Lysh utiliza Bash de Termux.
-LynaTop funciona sin psutil.
 """)
+
+    print(
+        f"Sistema:       {APP_NAME}"
+    )
+
+    print(
+        f"Versión:       {VERSION}"
+    )
+
+    print(
+        f"Directorio:    {ROOT}"
+    )
+
+    print(
+        f"Aplicaciones:  {len(APPLICATIONS)}"
+    )
+
+    print(
+        f"Python:        {sys.version.split()[0]}"
+    )
+
+    print()
+    print("Aplicaciones LynaOS 0.4:")
+    print()
+
+    for key, application in APPLICATIONS.items():
+
+        name, directory, filename = application
+
+        app_path = (
+            APPS_DIR /
+            directory /
+            filename
+        )
+
+        status = (
+            "✓"
+            if app_path.exists()
+            else "✗"
+        )
+
+        print(
+            f"  {status} {name}"
+        )
+
+    print()
+    print("LynaBash: Bash para LynaOS")
+    print("Lysh: Terminal Bash en Python")
+    print("LynaTop: Monitor basado en /proc")
 
 
 # ============================================================
@@ -147,7 +181,10 @@ def launch_application(key):
         filename
     )
 
-    if not app_path.exists():
+    if not application_exists(
+        directory,
+        filename
+    ):
 
         print()
         print(
@@ -193,63 +230,6 @@ def launch_application(key):
 
 
 # ============================================================
-#                         LYSH
-# ============================================================
-
-def launch_lysh():
-
-    lysh = (
-        APPS_DIR /
-        "lysh" /
-        "lysh.py"
-    )
-
-    if not lysh.exists():
-
-        print()
-        print(
-            "✗ Lysh no está instalado correctamente."
-        )
-
-        print(
-            f"Falta: {lysh}"
-        )
-
-        return
-
-    print()
-    print(
-        "▶ Iniciando Lysh..."
-    )
-    print()
-
-    try:
-
-        subprocess.run(
-            [
-                sys.executable,
-                str(lysh)
-            ]
-        )
-
-    except KeyboardInterrupt:
-
-        print()
-
-    except Exception as error:
-
-        print(
-            f"LynaOS: error iniciando Lysh:"
-        )
-
-        print(error)
-
-    input(
-        "\nPresiona ENTER para volver a LynaOS..."
-    )
-
-
-# ============================================================
 #                       LYNABASH
 # ============================================================
 
@@ -263,8 +243,17 @@ def launch_bash():
 
     if not bash.exists():
 
+        print()
         print(
-            "LynaBash no está instalado."
+            "✗ LynaBash no está instalado."
+        )
+
+        print(
+            f"Falta: {bash}"
+        )
+
+        input(
+            "\nPresiona ENTER para continuar..."
         )
 
         return
@@ -284,14 +273,20 @@ def launch_bash():
             ]
         )
 
+    except KeyboardInterrupt:
+
+        print()
+
     except Exception as error:
 
         print(
-            f"Error iniciando LynaBash: {error}"
+            f"LynaOS: error iniciando LynaBash:"
         )
 
+        print(error)
+
     input(
-        "\nPresiona ENTER para volver..."
+        "\nPresiona ENTER para volver a LynaOS..."
     )
 
 
@@ -301,11 +296,28 @@ def launch_bash():
 
 def restart():
 
+    print()
+    print(
+        "Reiniciando LynaOS..."
+    )
+
     main()
 
 
 # ============================================================
-#                            MAIN
+#                       APAGAR
+# ============================================================
+
+def shutdown():
+
+    print()
+    print(
+        "Apagando LynaOS..."
+    )
+
+
+# ============================================================
+                            MAIN
 # ============================================================
 
 def main():
@@ -315,9 +327,25 @@ def main():
         banner()
         menu()
 
-        command = input(
-            "lynaos> "
-        ).strip()
+        try:
+
+            command = input(
+                "lynaos> "
+            ).strip()
+
+        except KeyboardInterrupt:
+
+            print()
+            shutdown()
+
+            break
+
+        except EOFError:
+
+            print()
+            shutdown()
+
+            break
 
         if not command:
 
@@ -331,13 +359,11 @@ def main():
 
         if command in (
             "Q",
-            "EXIT"
+            "EXIT",
+            "QUIT"
         ):
 
-            print()
-            print(
-                "Apagando LynaOS..."
-            )
+            shutdown()
 
             break
 
@@ -345,7 +371,11 @@ def main():
         # INFORMACIÓN
         # ----------------------------------------------------
 
-        elif command == "I":
+        elif command in (
+            "I",
+            "INFO",
+            "ABOUT"
+        ):
 
             system_info()
 
@@ -357,7 +387,11 @@ def main():
         # LYNABASH
         # ----------------------------------------------------
 
-        elif command == "B":
+        elif command in (
+            "B",
+            "BASH",
+            "LYNABASH"
+        ):
 
             launch_bash()
 
@@ -365,7 +399,11 @@ def main():
         # REINICIAR
         # ----------------------------------------------------
 
-        elif command == "R":
+        elif command in (
+            "R",
+            "RESTART",
+            "REBOOT"
+        ):
 
             continue
 
@@ -383,9 +421,49 @@ def main():
         # LYSH DIRECTO
         # ----------------------------------------------------
 
-        elif command == "LYSH":
+        elif command in (
+            "LYSH",
+            "SHELL"
+        ):
 
-            launch_lysh()
+            launch_application(
+                "9"
+            )
+
+        # ----------------------------------------------------
+        # AYUDA
+        # ----------------------------------------------------
+
+        elif command in (
+            "H",
+            "HELP",
+            "?"
+        ):
+
+            print()
+            print(
+                "Introduce el número de una aplicación."
+            )
+
+            print(
+                "I = Información"
+            )
+
+            print(
+                "B = LynaBash"
+            )
+
+            print(
+                "R = Reiniciar"
+            )
+
+            print(
+                "Q = Salir"
+            )
+
+            input(
+                "\nPresiona ENTER para continuar..."
+            )
 
         # ----------------------------------------------------
         # COMANDO DESCONOCIDO
@@ -396,6 +474,10 @@ def main():
             print()
             print(
                 "Comando desconocido."
+            )
+
+            print(
+                "Escribe H para ver la ayuda."
             )
 
             input(

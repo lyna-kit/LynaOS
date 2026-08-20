@@ -10,9 +10,11 @@ from urllib.parse import urljoin, urlparse
 
 
 APP_NAME = "Shelly"
-APP_VERSION = "0.3"
+APP_VERSION = "0.4"
 
-USER_AGENT = "Shelly/0.3 LynaOS"
+USER_AGENT = "Shelly/0.4 LynaOS"
+
+MAX_DOWNLOAD_SIZE = 5 * 1024 * 1024
 
 
 # ============================================================
@@ -22,22 +24,13 @@ USER_AGENT = "Shelly/0.3 LynaOS"
 def banner():
 
     print("""
-╔══════════════════════════════════════╗
-║             Shelly 0.3               ║
-║        Navegador de texto            ║
-╚══════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════╗
+║                       Shelly 0.4                         ║
+║                  Navegador de texto                     ║
+╚══════════════════════════════════════════════════════════╝
 
-Comandos:
-
-  OPEN <URL>       Abrir página
-  LINKS            Mostrar enlaces
-  BACK             Página anterior
-  FORWARD          Página siguiente
-  SAVE <archivo>   Guardar página
-  CLEAR            Limpiar pantalla
-  ABOUT            Información
-  H                Ayuda
-  Q                Salir
+Escribe H para ver la ayuda.
+Escribe Q para salir.
 """)
 
 
@@ -48,30 +41,43 @@ Comandos:
 def help_command():
 
     print("""
-Shelly 0.3
+Shelly 0.4
 
-Navegación:
+NAVEGACIÓN
 
   OPEN <URL>       Abrir una página web
+  OPEN <número>    Abrir un enlace de LINKS
+  GO <URL>         Alias de OPEN
+  BACK             Página anterior
+  FORWARD          Página siguiente
+  RELOAD           Recargar la página actual
+  HOME             Volver a la página inicial
+  HISTORY          Mostrar historial
+
+ENLACES
+
   LINKS            Mostrar enlaces encontrados
-  BACK             Volver a la página anterior
-  FORWARD          Avanzar en el historial
 
-Archivos:
+ARCHIVOS
 
-  SAVE <archivo>   Guardar el contenido actual
+  SAVE <archivo>   Guardar el texto de la página
 
-Sistema:
+SISTEMA
 
   CLEAR            Limpiar pantalla
   ABOUT            Información
   H                Ayuda
   Q                Salir
 
-Ejemplos:
+EJEMPLOS
 
   OPEN https://example.com
   LINKS
+  OPEN 2
+  BACK
+  FORWARD
+  RELOAD
+  HISTORY
   SAVE pagina.txt
 """)
 
@@ -98,7 +104,16 @@ def html_to_text(html):
         flags=re.IGNORECASE | re.DOTALL
     )
 
-    # Separadores visuales.
+    # Eliminar contenido no visible.
+
+    html = re.sub(
+        r"<noscript\b[^>]*>.*?</noscript>",
+        " ",
+        html,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+
+    # Separadores.
 
     html = re.sub(
         r"<br\s*/?>",
@@ -116,6 +131,13 @@ def html_to_text(html):
 
     html = re.sub(
         r"</div\s*>",
+        "\n",
+        html,
+        flags=re.IGNORECASE
+    )
+
+    html = re.sub(
+        r"</li\s*>",
         "\n",
         html,
         flags=re.IGNORECASE
@@ -149,12 +171,46 @@ def html_to_text(html):
     )
 
     text = re.sub(
+        r"\n[ \t]+",
+        "\n",
+        text
+    )
+
+    text = re.sub(
+        r"[ \t]+\n",
+        "\n",
+        text
+    )
+
+    text = re.sub(
         r"\n\s*\n\s*\n+",
         "\n\n",
         text
     )
 
     return text.strip()
+
+
+# ============================================================
+#                         TÍTULO
+# ============================================================
+
+def extract_title(html):
+
+    match = re.search(
+        r"<title\b[^>]*>(.*?)</title>",
+        html,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+
+    if not match:
+        return ""
+
+    title = html_to_text(
+        match.group(1)
+    )
+
+    return title.strip()
 
 
 # ============================================================
@@ -196,7 +252,6 @@ def extract_links(html, base_url):
             "http",
             "https"
         ):
-
             continue
 
         links.append(
@@ -218,13 +273,22 @@ def fetch_page(url):
     if not url.startswith(
         ("http://", "https://")
     ):
-
         url = "https://" + url
+
+    parsed = urlparse(url)
+
+    if parsed.scheme not in (
+        "http",
+        "https"
+    ):
+        print("✗ URL no válida.")
+        return None
 
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": USER_AGENT
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml",
         }
     )
 
@@ -236,17 +300,46 @@ def fetch_page(url):
         ) as response:
 
             final_url = response.geturl()
+
             content_type = response.headers.get(
                 "Content-Type",
                 ""
             )
 
-            data = response.read()
+            content_length = response.headers.get(
+                "Content-Length"
+            )
+
+            if content_length:
+
+                try:
+
+                    if int(content_length) > MAX_DOWNLOAD_SIZE:
+
+                        print(
+                            "✗ La página es demasiado grande."
+                        )
+
+                        return None
+
+                except ValueError:
+                    pass
+
+            data = response.read(
+                MAX_DOWNLOAD_SIZE + 1
+            )
+
+            if len(data) > MAX_DOWNLOAD_SIZE:
+
+                print(
+                    "✗ La página supera el límite de 5 MB."
+                )
+
+                return None
 
             charset = response.headers.get_content_charset()
 
             if not charset:
-
                 charset = "utf-8"
 
             try:
@@ -310,13 +403,39 @@ class Browser:
         self.current_url = None
         self.current_html = None
         self.current_text = None
+        self.current_title = None
         self.current_links = []
+
+        self.home_url = None
 
     # --------------------------------------------------------
     # OPEN
     # --------------------------------------------------------
 
     def open(self, url, add_history=True):
+
+        # Abrir enlace mediante número.
+
+        if (
+            url.isdigit()
+            and self.current_links
+        ):
+
+            number = int(url)
+
+            if number < 1 or number > len(
+                self.current_links
+            ):
+
+                print(
+                    "✗ Número de enlace no válido."
+                )
+
+                return False
+
+            url = self.current_links[
+                number - 1
+            ][1]
 
         print()
         print(
@@ -326,18 +445,24 @@ class Browser:
         result = fetch_page(url)
 
         if result is None:
-
             return False
 
         final_url, content_type, html = result
 
-        if "text/html" not in content_type.lower():
+        if (
+            "text/html" not in
+            content_type.lower()
+        ):
 
             print(
                 f"⚠ Tipo de contenido: {content_type}"
             )
 
         text = html_to_text(
+            html
+        )
+
+        title = extract_title(
             html
         )
 
@@ -349,37 +474,41 @@ class Browser:
         self.current_url = final_url
         self.current_html = html
         self.current_text = text
+        self.current_title = title
         self.current_links = links
+
+        if self.home_url is None:
+            self.home_url = final_url
 
         if add_history:
 
+            self.history = self.history[
+                :self.history_index + 1
+            ]
+
             if (
-                self.history_index >= 0
-                and self.history[
-                    self.history_index
-                ] == final_url
+                not self.history
+                or self.history[-1] != final_url
             ):
-
-                pass
-
-            else:
-
-                self.history = self.history[
-                    :self.history_index + 1
-                ]
 
                 self.history.append(
                     final_url
                 )
 
-                self.history_index = (
-                    len(self.history) - 1
-                )
+            self.history_index = (
+                len(self.history) - 1
+            )
 
         print()
         print(
             f"✓ {final_url}"
         )
+
+        if title:
+
+            print(
+                f"📄 {title}"
+            )
 
         print()
 
@@ -416,9 +545,7 @@ class Browser:
             return
 
         print()
-        print(
-            "Enlaces:"
-        )
+        print("Enlaces:")
         print()
 
         for number, (label, url) in enumerate(
@@ -433,6 +560,8 @@ class Browser:
             print(
                 f"   {url}"
             )
+
+        print()
 
     # --------------------------------------------------------
     # BACK
@@ -487,6 +616,81 @@ class Browser:
         )
 
     # --------------------------------------------------------
+    # RELOAD
+    # --------------------------------------------------------
+
+    def reload(self):
+
+        if not self.current_url:
+
+            print(
+                "No hay ninguna página abierta."
+            )
+
+            return
+
+        self.open(
+            self.current_url,
+            add_history=False
+        )
+
+    # --------------------------------------------------------
+    # HOME
+    # --------------------------------------------------------
+
+    def home(self):
+
+        if not self.home_url:
+
+            print(
+                "No hay página inicial."
+            )
+
+            return
+
+        self.open(
+            self.home_url
+        )
+
+    # --------------------------------------------------------
+    # HISTORY
+    # --------------------------------------------------------
+
+    def show_history(self):
+
+        if not self.history:
+
+            print(
+                "El historial está vacío."
+            )
+
+            return
+
+        print()
+        print("Historial:")
+        print()
+
+        for number, url in enumerate(
+            self.history,
+            start=1
+        ):
+
+            marker = ""
+
+            if (
+                number - 1
+                == self.history_index
+            ):
+
+                marker = " ← actual"
+
+            print(
+                f"{number}. {url}{marker}"
+            )
+
+        print()
+
+    # --------------------------------------------------------
     # SAVE
     # --------------------------------------------------------
 
@@ -528,7 +732,7 @@ class Browser:
                 f"✓ Página guardada en: {path}"
             )
 
-        except Exception as error:
+        except OSError as error:
 
             print(
                 f"✗ Error guardando: {error}"
@@ -551,8 +755,12 @@ Funciones:
   • Navegación HTTP/HTTPS
   • Conversión HTML → texto
   • Extracción de enlaces
-  • Historial
+  • Apertura de enlaces por número
+  • Historial de navegación
+  • BACK / FORWARD
+  • RELOAD / HOME
   • Guardado de páginas
+  • Límite de descarga de 5 MB
 """)
 
 
@@ -570,8 +778,19 @@ def run():
 
         try:
 
+            prompt = "shelly"
+
+            if browser.current_url:
+
+                hostname = urlparse(
+                    browser.current_url
+                ).netloc
+
+                if hostname:
+                    prompt = f"shelly:{hostname}"
+
             command = input(
-                "shelly> "
+                f"{prompt}> "
             ).strip()
 
         except KeyboardInterrupt:
@@ -586,6 +805,9 @@ def run():
         except EOFError:
 
             print()
+            print(
+                "Saliendo de Shelly..."
+            )
 
             break
 
@@ -611,7 +833,8 @@ def run():
 
         if action in (
             "Q",
-            "EXIT"
+            "EXIT",
+            "QUIT"
         ):
 
             print(
@@ -677,6 +900,30 @@ def run():
             browser.forward()
 
         # ----------------------------------------------------
+        # RELOAD
+        # ----------------------------------------------------
+
+        elif action == "RELOAD":
+
+            browser.reload()
+
+        # ----------------------------------------------------
+        # HOME
+        # ----------------------------------------------------
+
+        elif action == "HOME":
+
+            browser.home()
+
+        # ----------------------------------------------------
+        # HISTORY
+        # ----------------------------------------------------
+
+        elif action == "HISTORY":
+
+            browser.show_history()
+
+        # ----------------------------------------------------
         # SAVE
         # ----------------------------------------------------
 
@@ -733,4 +980,5 @@ def run():
 # ============================================================
 
 if __name__ == "__main__":
+
     run()

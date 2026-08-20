@@ -7,7 +7,7 @@ import sys
 
 
 APP_NAME = "Lysh"
-APP_VERSION = "0.1"
+APP_VERSION = "0.4"
 
 BASH = shutil.which("bash")
 
@@ -20,35 +20,31 @@ def banner():
 
     print("""
 ╔══════════════════════════════════════════════════════════╗
-║                       Lysh 0.1                          ║
+║                       Lysh 0.4                          ║
 ║                LynaOS Shell Interface                   ║
 ╚══════════════════════════════════════════════════════════╝
 
-Lysh utiliza Bash de Termux.
+Lysh utiliza Bash como backend.
 
+Escribe 'help' para ver los comandos especiales.
 Escribe 'exit' para volver a LynaOS.
-Escribe 'help' para ver información.
 """)
 
 
 # ============================================================
-#                       COMPROBAR BASH
+#                    COMPROBAR ENTORNO
 # ============================================================
 
-def check_bash():
+def check_environment():
 
     if BASH is None:
 
         print("✗ Bash no está disponible.")
-
         print()
-        print(
-            "En Termux puedes instalarlo con:"
-        )
-
-        print(
-            "pkg install bash"
-        )
+        print("En Termux puedes instalarlo con:")
+        print()
+        print("    pkg install bash")
+        print()
 
         return False
 
@@ -62,32 +58,43 @@ def check_bash():
 def help_command():
 
     print("""
-Lysh 0.1
+============================================================
+                         Lysh 0.4
+============================================================
 
-Lysh es la interfaz de shell de LynaOS.
+Lysh es la interfaz de terminal de LynaOS.
 
-El shell utilizado es Bash.
+Los comandos normales se ejecutan mediante Bash.
 
-Comandos especiales:
+COMANDOS ESPECIALES
 
-  help       Mostrar esta ayuda
-  version    Mostrar versión
-  clear      Limpiar pantalla
-  exit       Salir de Lysh
+  help          Mostrar esta ayuda
+  version       Mostrar versión
+  clear         Limpiar pantalla
+  pwd           Mostrar directorio actual
+  cd <ruta>     Cambiar de directorio
+  history       Mostrar historial
+  whoami        Mostrar usuario actual
+  exit          Salir de Lysh
+  quit          Salir de Lysh
 
-Todos los demás comandos se ejecutan
-directamente mediante Bash.
-
-Ejemplos:
+EJEMPLOS
 
   ls
   pwd
   cd ..
   mkdir prueba
-  chmod +x archivo.sh
-  ./archivo.sh
+  touch archivo.txt
+  cp archivo.txt copia.txt
+  mv copia.txt nueva.txt
+  rm archivo.txt
+  chmod +x programa.sh
+  ./programa.sh
   python programa.py
   git status
+
+Lysh ejecuta los comandos directamente con Bash.
+============================================================
 """)
 
 
@@ -97,16 +104,105 @@ Ejemplos:
 
 def version():
 
-    print(
-        f"{APP_NAME} {APP_VERSION}"
-    )
+    print()
+    print(f"{APP_NAME} {APP_VERSION}")
+    print("LynaOS Shell Interface")
+    print()
+    print("Backend:")
 
-    print(
-        "Bash backend:"
-    )
+    if BASH:
+        print(f"  Bash: {BASH}")
 
-    print(
-        BASH if BASH else "No disponible"
+        try:
+
+            result = subprocess.run(
+                [BASH, "--version"],
+                capture_output=True,
+                text=True
+            )
+
+            first_line = result.stdout.splitlines()
+
+            if first_line:
+                print(f"  {first_line[0]}")
+
+        except Exception:
+            pass
+
+    else:
+        print("  Bash: No disponible")
+
+    print()
+
+
+# ============================================================
+#                        HISTORIAL
+# ============================================================
+
+command_history = []
+
+
+def show_history():
+
+    print()
+
+    if not command_history:
+
+        print("El historial está vacío.")
+        print()
+
+        return
+
+    for number, command in enumerate(
+        command_history,
+        start=1
+    ):
+
+        print(
+            f"{number:>4}  {command}"
+        )
+
+    print()
+
+
+# ============================================================
+#                    DIRECTORIO ACTUAL
+# ============================================================
+
+def current_directory():
+
+    path = os.getcwd()
+    home = os.path.expanduser("~")
+
+    if path == home:
+
+        return "~"
+
+    if path.startswith(home + os.sep):
+
+        return (
+            "~" +
+            path[len(home):]
+        )
+
+    return path
+
+
+# ============================================================
+#                         PROMPT
+# ============================================================
+
+def prompt():
+
+    directory = current_directory()
+
+    return (
+        "\033[32m"
+        "lysh"
+        "\033[0m:"
+        "\033[34m"
+        f"{directory}"
+        "\033[0m$ "
     )
 
 
@@ -115,6 +211,14 @@ def version():
 # ============================================================
 
 def execute(command):
+
+    if BASH is None:
+
+        print(
+            "Lysh: Bash no está disponible."
+        )
+
+        return 1
 
     try:
 
@@ -135,6 +239,14 @@ def execute(command):
 
         return 130
 
+    except FileNotFoundError:
+
+        print(
+            "Lysh: no se pudo ejecutar Bash."
+        )
+
+        return 1
+
     except Exception as error:
 
         print(
@@ -145,32 +257,234 @@ def execute(command):
 
 
 # ============================================================
-#                         PROMPT
+#                      EJECUTAR CD
 # ============================================================
 
-def prompt():
+def change_directory(command):
 
-    current_directory = os.getcwd()
+    parts = command.split(maxsplit=1)
 
-    home = os.path.expanduser("~")
+    if len(parts) == 1:
 
-    if current_directory.startswith(home):
+        destination = os.path.expanduser("~")
 
-        current_directory = (
-            "~" +
-            current_directory[
-                len(home):
-            ]
+    else:
+
+        destination = parts[1].strip()
+
+        destination = os.path.expanduser(
+            destination
         )
 
-    return (
-        f"\033[32m"
-        f"lysh"
-        f"\033[0m:"
-        f"\033[34m"
-        f"{current_directory}"
-        f"\033[0m$ "
+    try:
+
+        os.chdir(destination)
+
+    except FileNotFoundError:
+
+        print(
+            f"Lysh: directorio no encontrado: {destination}"
+        )
+
+    except NotADirectoryError:
+
+        print(
+            f"Lysh: no es un directorio: {destination}"
+        )
+
+    except PermissionError:
+
+        print(
+            f"Lysh: permiso denegado: {destination}"
+        )
+
+    except Exception as error:
+
+        print(
+            f"Lysh: error: {error}"
+        )
+
+
+# ============================================================
+#                     EJECUTAR PWD
+# ============================================================
+
+def show_pwd():
+
+    print(
+        os.getcwd()
     )
+
+
+# ============================================================
+#                     EJECUTAR WHOAMI
+# ============================================================
+
+def show_user():
+
+    try:
+
+        result = subprocess.run(
+            [
+                BASH,
+                "-c",
+                "whoami"
+            ],
+            capture_output=True,
+            text=True
+        )
+
+        output = result.stdout.strip()
+
+        if output:
+            print(output)
+        else:
+            print(
+                os.environ.get(
+                    "USER",
+                    "unknown"
+                )
+            )
+
+    except Exception:
+
+        print(
+            os.environ.get(
+                "USER",
+                "unknown"
+            )
+        )
+
+
+# ============================================================
+#                       LIMPIAR
+# ============================================================
+
+def clear_screen():
+
+    os.system("clear")
+
+
+# ============================================================
+#                   PROCESAR COMANDO
+# ============================================================
+
+def process_command(command):
+
+    lower = command.lower()
+
+    # --------------------------------------------------------
+    # EXIT
+    # --------------------------------------------------------
+
+    if lower in (
+        "exit",
+        "quit"
+    ):
+
+        print(
+            "Saliendo de Lysh..."
+        )
+
+        return False
+
+
+    # --------------------------------------------------------
+    # HELP
+    # --------------------------------------------------------
+
+    if lower in (
+        "help",
+        "?"
+    ):
+
+        help_command()
+
+        return True
+
+
+    # --------------------------------------------------------
+    # VERSION
+    # --------------------------------------------------------
+
+    if lower in (
+        "version",
+        "--version"
+    ):
+
+        version()
+
+        return True
+
+
+    # --------------------------------------------------------
+    # CLEAR
+    # --------------------------------------------------------
+
+    if lower in (
+        "clear",
+        "cls"
+    ):
+
+        clear_screen()
+
+        return True
+
+
+    # --------------------------------------------------------
+    # HISTORY
+    # --------------------------------------------------------
+
+    if lower == "history":
+
+        show_history()
+
+        return True
+
+
+    # --------------------------------------------------------
+    # PWD
+    # --------------------------------------------------------
+
+    if lower == "pwd":
+
+        show_pwd()
+
+        return True
+
+
+    # --------------------------------------------------------
+    # WHOAMI
+    # --------------------------------------------------------
+
+    if lower == "whoami":
+
+        show_user()
+
+        return True
+
+
+    # --------------------------------------------------------
+    # CD
+    # --------------------------------------------------------
+
+    if (
+        lower == "cd"
+        or lower.startswith("cd ")
+    ):
+
+        change_directory(command)
+
+        return True
+
+
+    # --------------------------------------------------------
+    # BASH
+    # --------------------------------------------------------
+
+    execute(command)
+
+    return True
 
 
 # ============================================================
@@ -179,7 +493,7 @@ def prompt():
 
 def run():
 
-    if not check_bash():
+    if not check_environment():
 
         return 1
 
@@ -202,6 +516,9 @@ def run():
         except EOFError:
 
             print()
+            print(
+                "Saliendo de Lysh..."
+            )
 
             break
 
@@ -211,66 +528,16 @@ def run():
             continue
 
 
-        lower = command.lower()
+        command_history.append(
+            command
+        )
 
 
-        # ----------------------------------------------------
-        # EXIT
-        # ----------------------------------------------------
-
-        if lower in (
-            "exit",
-            "quit"
+        if not process_command(
+            command
         ):
-
-            print(
-                "Saliendo de Lysh..."
-            )
 
             break
-
-
-        # ----------------------------------------------------
-        # HELP
-        # ----------------------------------------------------
-
-        if lower == "help":
-
-            help_command()
-
-            continue
-
-
-        # ----------------------------------------------------
-        # VERSION
-        # ----------------------------------------------------
-
-        if lower in (
-            "version",
-            "--version"
-        ):
-
-            version()
-
-            continue
-
-
-        # ----------------------------------------------------
-        # CLEAR
-        # ----------------------------------------------------
-
-        if lower == "clear":
-
-            os.system("clear")
-
-            continue
-
-
-        # ----------------------------------------------------
-        # BASH
-        # ----------------------------------------------------
-
-        execute(command)
 
 
     return 0

@@ -2,62 +2,105 @@
 
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 
 APP_NAME = "LynaFiles"
-APP_VERSION = "0.3"
+APP_VERSION = "0.4"
 
 
 # ============================================================
-#                         UTILIDADES
+#                         ESTADO
 # ============================================================
 
-def get_path(value):
+current_dir = Path.cwd()
+history = []
+
+
+# ============================================================
+#                       UTILIDADES
+# ============================================================
+
+def clear():
+    os.system("clear")
+
+
+def format_size(size):
+    units = ["B", "KB", "MB", "GB", "TB"]
+
+    size = float(size)
+
+    for unit in units:
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+
+        size /= 1024
+
+    return f"{size:.1f} PB"
+
+
+def format_permissions(path):
+
+    try:
+        mode = path.stat().st_mode
+
+        permissions = ""
+
+        permissions += "d" if path.is_dir() else "-"
+
+        permissions += "r" if mode & 0o400 else "-"
+        permissions += "w" if mode & 0o200 else "-"
+        permissions += "x" if mode & 0o100 else "-"
+
+        permissions += "r" if mode & 0o040 else "-"
+        permissions += "w" if mode & 0o020 else "-"
+        permissions += "x" if mode & 0o010 else "-"
+
+        permissions += "r" if mode & 0o004 else "-"
+        permissions += "w" if mode & 0o002 else "-"
+        permissions += "x" if mode & 0o001 else "-"
+
+        return permissions
+
+    except Exception:
+        return "----------"
+
+
+def resolve_path(value):
 
     path = Path(value).expanduser()
 
     if not path.is_absolute():
-        path = Path.cwd() / path
+        path = current_dir / path
 
-    return path.resolve()
-
-
-def format_size(size):
-
-    units = [
-        "B",
-        "KB",
-        "MB",
-        "GB",
-        "TB"
-    ]
-
-    value = float(size)
-
-    for unit in units:
-
-        if value < 1024:
-
-            return f"{value:.2f} {unit}"
-
-        value /= 1024
-
-    return f"{value:.2f} PB"
+    try:
+        return path.resolve()
+    except Exception:
+        return path.absolute()
 
 
-def file_type(path):
+def display_name(path):
 
-    if path.is_dir():
-        return "Directorio"
+    if path.name:
+        return path.name
 
-    if path.is_file():
-        return "Archivo"
+    return str(path)
 
-    if path.is_symlink():
-        return "Enlace"
 
-    return "Desconocido"
+def is_safe_path(path):
+
+    try:
+        path.resolve()
+        return True
+    except Exception:
+        return False
+
+
+def pause():
+
+    input("\nPresiona ENTER para continuar...")
 
 
 # ============================================================
@@ -66,425 +109,384 @@ def file_type(path):
 
 def banner():
 
-    print("""
-╔══════════════════════════════════════╗
-║          LynaFiles 0.3               ║
-║       Gestor de archivos             ║
-╚══════════════════════════════════════╝
+    print(f"""
+╔══════════════════════════════════════════════════════════╗
+║                    {APP_NAME} {APP_VERSION}                       ║
+║                 Administrador de archivos               ║
+╚══════════════════════════════════════════════════════════╝
 """)
 
 
 # ============================================================
-#                           AYUDA
+#                           LIST
 # ============================================================
 
-def help_command():
-
-    print("""
-LynaFiles 0.3
-
-Navegación:
-
-  L <ruta>                 Listar contenido
-  CD <ruta>                Cambiar directorio
-  PWD                      Mostrar directorio actual
-
-Archivos:
-
-  C <archivo>              Crear archivo
-  CAT <archivo>            Leer archivo
-  INFO <ruta>              Información
-
-Directorios:
-
-  MK <carpeta>             Crear carpeta
-
-Operaciones:
-
-  CP <origen> <destino>    Copiar
-  MV <origen> <destino>    Mover / renombrar
-  RM <ruta>                Eliminar
-
-Búsqueda:
-
-  SEARCH <texto>           Buscar en el directorio actual
-
-Sistema:
-
-  CLEAR                    Limpiar pantalla
-  H                        Ayuda
-  Q                        Salir
-
-Ejemplos:
-
-  L .
-  CD ~/Download
-  C prueba.txt
-  MK documentos
-  CP prueba.txt documentos/
-  MV prueba.txt nuevo.txt
-  CAT nuevo.txt
-  INFO nuevo.txt
-  SEARCH .txt
-  RM nuevo.txt
-""")
-
-
-# ============================================================
-#                           LISTAR
-# ============================================================
-
-def list_directory(path):
-
-    path = get_path(path)
-
-    if not path.exists():
-
-        print(
-            "✗ La ruta no existe."
-        )
-
-        return
-
-    if not path.is_dir():
-
-        print(
-            "✗ La ruta no es un directorio."
-        )
-
-        return
+def list_files():
 
     try:
+        entries = list(current_dir.iterdir())
 
-        items = sorted(
-            path.iterdir(),
+    except PermissionError:
+        print("✗ Permiso denegado.")
+        return
+
+    except Exception as error:
+        print(f"✗ Error: {error}")
+        return
+
+    entries.sort(
+        key=lambda item: (
+            not item.is_dir(),
+            item.name.lower()
+        )
+    )
+
+    print()
+    print(f"Ruta: {current_dir}")
+    print("─" * 70)
+
+    if not entries:
+        print("(directorio vacío)")
+        return
+
+    print(
+        f"{'#':>3}  "
+        f"{'TIPO':<5} "
+        f"{'TAMAÑO':>12}  "
+        f"NOMBRE"
+    )
+
+    print("─" * 70)
+
+    for index, entry in enumerate(entries, start=1):
+
+        try:
+            if entry.is_dir():
+                kind = "DIR"
+                size = "-"
+            elif entry.is_symlink():
+                kind = "LINK"
+                size = "-"
+            else:
+                kind = "FILE"
+                size = format_size(
+                    entry.stat().st_size
+                )
+
+        except Exception:
+            kind = "?"
+            size = "?"
+
+        print(
+            f"{index:>3}  "
+            f"{kind:<5} "
+            f"{size:>12}  "
+            f"{entry.name}"
+        )
+
+    print("─" * 70)
+
+
+def get_entries():
+
+    try:
+        entries = list(current_dir.iterdir())
+
+        entries.sort(
             key=lambda item: (
                 not item.is_dir(),
                 item.name.lower()
             )
         )
 
-        print()
-        print(
-            f"📁 {path}"
-        )
-        print()
+        return entries
 
-        if not items:
+    except Exception:
+        return []
 
-            print(
-                "(Directorio vacío)"
-            )
 
-            return
+def get_entry(number):
 
-        for item in items:
+    entries = get_entries()
 
-            if item.is_dir():
+    try:
+        index = int(number) - 1
+    except ValueError:
+        print("✗ Número inválido.")
+        return None
 
-                print(
-                    f"📁 {item.name}/"
+    if index < 0 or index >= len(entries):
+        print("✗ No existe ese elemento.")
+        return None
+
+    return entries[index]
+
+
+# ============================================================
+#                           CD
+# ============================================================
+
+def change_directory(target):
+
+    global current_dir
+    global history
+
+    if not target:
+        target = str(Path.home())
+
+    path = resolve_path(target)
+
+    if not path.exists():
+        print("✗ El directorio no existe.")
+        return
+
+    if not path.is_dir():
+        print("✗ No es un directorio.")
+        return
+
+    try:
+        path = path.resolve()
+
+        history.append(current_dir)
+
+        current_dir = path
+
+    except Exception as error:
+        print(f"✗ No se pudo cambiar de directorio: {error}")
+
+
+def back_directory():
+
+    global current_dir
+
+    if history:
+
+        current_dir = history.pop()
+        return
+
+    parent = current_dir.parent
+
+    if parent == current_dir:
+        print("Ya estás en la raíz.")
+        return
+
+    current_dir = parent
+
+
+# ============================================================
+#                           OPEN
+# ============================================================
+
+def open_file(target):
+
+    path = get_target_path(target)
+
+    if path is None:
+        return
+
+    if not path.exists():
+        print("✗ El archivo no existe.")
+        return
+
+    if path.is_dir():
+
+        change_directory(str(path))
+        return
+
+    print(
+        f"▶ Abriendo: {path.name}"
+    )
+
+    try:
+
+        if sys.platform.startswith("linux"):
+
+            if shutil.which("termux-open"):
+                subprocess.run(
+                    ["termux-open", str(path)],
+                    check=False
                 )
 
-            elif item.is_file():
-
-                print(
-                    f"📄 {item.name}"
-                )
-
-            elif item.is_symlink():
-
-                print(
-                    f"🔗 {item.name}"
+            elif shutil.which("xdg-open"):
+                subprocess.run(
+                    ["xdg-open", str(path)],
+                    check=False
                 )
 
             else:
-
                 print(
-                    f"❓ {item.name}"
+                    "No se encontró termux-open ni xdg-open."
                 )
 
-    except PermissionError:
+        elif sys.platform == "darwin":
 
-        print(
-            "✗ Permiso denegado."
-        )
+            subprocess.run(
+                ["open", str(path)],
+                check=False
+            )
+
+        elif os.name == "nt":
+
+            os.startfile(str(path))
+
+        else:
+            print(
+                "Sistema operativo no compatible."
+            )
 
     except Exception as error:
-
-        print(
-            f"✗ Error: {error}"
-        )
+        print(f"✗ Error al abrir: {error}")
 
 
 # ============================================================
-#                      CAMBIAR DIRECTORIO
+#                         OBTENER RUTA
 # ============================================================
 
-def change_directory(path):
+def get_target_path(value):
 
-    target = get_path(path)
-
-    if not target.exists():
-
-        print(
-            "✗ El directorio no existe."
-        )
-
-        return
-
-    if not target.is_dir():
-
-        print(
-            "✗ No es un directorio."
-        )
-
-        return
+    if not value:
+        print("✗ Debes indicar un archivo.")
+        return None
 
     try:
+        number = int(value)
 
-        os.chdir(target)
+        entry = get_entry(str(number))
 
-        print(
-            f"✓ Directorio actual: {Path.cwd()}"
-        )
+        return entry
 
-    except PermissionError:
-
-        print(
-            "✗ Permiso denegado."
-        )
-
-    except Exception as error:
-
-        print(
-            f"✗ Error: {error}"
-        )
+    except ValueError:
+        return resolve_path(value)
 
 
 # ============================================================
-#                      CREAR ARCHIVO
-# ============================================================
-
-def create_file(path):
-
-    target = get_path(path)
-
-    if target.exists():
-
-        print(
-            "✗ El archivo o directorio ya existe."
-        )
-
-        return
-
-    try:
-
-        target.parent.mkdir(
-            parents=True,
-            exist_ok=True
-        )
-
-        target.touch()
-
-        print(
-            f"✓ Archivo creado: {target}"
-        )
-
-    except PermissionError:
-
-        print(
-            "✗ Permiso denegado."
-        )
-
-    except Exception as error:
-
-        print(
-            f"✗ Error: {error}"
-        )
-
-
-# ============================================================
-#                     CREAR DIRECTORIO
-# ============================================================
-
-def create_directory(path):
-
-    target = get_path(path)
-
-    try:
-
-        target.mkdir(
-            parents=True,
-            exist_ok=False
-        )
-
-        print(
-            f"✓ Directorio creado: {target}"
-        )
-
-    except FileExistsError:
-
-        print(
-            "✗ El directorio ya existe."
-        )
-
-    except PermissionError:
-
-        print(
-            "✗ Permiso denegado."
-        )
-
-    except Exception as error:
-
-        print(
-            f"✗ Error: {error}"
-        )
-
-
-# ============================================================
-#                           COPIAR
+#                           COPY
 # ============================================================
 
 def copy_item(source, destination):
 
-    source = get_path(source)
-    destination = get_path(destination)
+    source_path = get_target_path(source)
 
-    if not source.exists():
+    if source_path is None:
+        return
 
-        print(
-            "✗ El origen no existe."
-        )
+    destination_path = resolve_path(destination)
 
+    if not source_path.exists():
+        print("✗ El origen no existe.")
         return
 
     try:
 
-        if source.is_dir():
+        if source_path.is_dir():
 
-            final_destination = destination
-
-            if destination.exists() and destination.is_dir():
+            if destination_path.exists():
 
                 final_destination = (
-                    destination / source.name
+                    destination_path
+                    / source_path.name
                 )
 
+            else:
+
+                final_destination = destination_path
+
             shutil.copytree(
-                source,
-                final_destination
+                source_path,
+                final_destination,
+                dirs_exist_ok=True
             )
 
         else:
 
-            if destination.exists() and destination.is_dir():
+            if destination_path.is_dir():
 
-                destination = (
-                    destination / source.name
+                destination_path = (
+                    destination_path
+                    / source_path.name
                 )
 
             shutil.copy2(
-                source,
-                destination
+                source_path,
+                destination_path
             )
 
         print(
-            f"✓ Copiado: {source} → {destination}"
-        )
-
-    except FileExistsError:
-
-        print(
-            "✗ El destino ya existe."
-        )
-
-    except PermissionError:
-
-        print(
-            "✗ Permiso denegado."
+            f"✓ Copiado: {source_path.name}"
         )
 
     except Exception as error:
 
         print(
-            f"✗ Error: {error}"
+            f"✗ No se pudo copiar: {error}"
         )
 
 
 # ============================================================
-#                       MOVER / RENOMBRAR
+#                           MOVE
 # ============================================================
 
 def move_item(source, destination):
 
-    source = get_path(source)
-    destination = get_path(destination)
+    source_path = get_target_path(source)
 
-    if not source.exists():
+    if source_path is None:
+        return
 
-        print(
-            "✗ El origen no existe."
-        )
+    destination_path = resolve_path(destination)
 
+    if not source_path.exists():
+        print("✗ El origen no existe.")
         return
 
     try:
 
-        if destination.exists() and destination.is_dir():
+        if destination_path.is_dir():
 
-            destination = (
-                destination / source.name
+            destination_path = (
+                destination_path
+                / source_path.name
             )
 
         shutil.move(
-            str(source),
-            str(destination)
+            str(source_path),
+            str(destination_path)
         )
 
         print(
-            f"✓ Movido: {source} → {destination}"
-        )
-
-    except PermissionError:
-
-        print(
-            "✗ Permiso denegado."
+            f"✓ Movido: {source_path.name}"
         )
 
     except Exception as error:
 
         print(
-            f"✗ Error: {error}"
+            f"✗ No se pudo mover: {error}"
         )
 
 
 # ============================================================
-#                          ELIMINAR
+#                         REMOVE
 # ============================================================
 
-def remove_item(path):
+def remove_item(target):
 
-    target = get_path(path)
+    path = get_target_path(target)
 
-    if not target.exists():
+    if path is None:
+        return
 
-        print(
-            "✗ La ruta no existe."
-        )
-
+    if not path.exists() and not path.is_symlink():
+        print("✗ El elemento no existe.")
         return
 
     print()
     print(
-        f"⚠ Vas a eliminar: {target}"
+        f"⚠ Vas a eliminar: {path}"
     )
 
-    if target.is_dir():
-
+    if path.is_dir():
         print(
-            "Esto eliminará el directorio y "
-            "todo su contenido."
+            "⚠ Esto eliminará el directorio y su contenido."
         )
 
     confirmation = input(
@@ -498,155 +500,166 @@ def remove_item(path):
         "y",
         "yes"
     ):
-
-        print(
-            "Operación cancelada."
-        )
-
+        print("Operación cancelada.")
         return
 
     try:
 
-        if target.is_dir():
+        if path.is_dir() and not path.is_symlink():
 
-            shutil.rmtree(target)
+            shutil.rmtree(path)
 
         else:
 
-            target.unlink()
+            path.unlink()
 
         print(
-            "✓ Eliminado correctamente."
+            "✓ Elemento eliminado."
         )
 
     except PermissionError:
-
         print(
             "✗ Permiso denegado."
         )
 
     except Exception as error:
-
         print(
-            f"✗ Error: {error}"
+            f"✗ Error eliminando: {error}"
         )
 
 
 # ============================================================
-#                           INFO
+#                         MKDIR
 # ============================================================
 
-def show_info(path):
+def make_directory(name):
 
-    target = get_path(path)
+    if not name:
+        print("✗ Debes indicar un nombre.")
+        return
 
-    if not target.exists():
+    path = resolve_path(name)
 
-        print(
-            "✗ La ruta no existe."
+    try:
+
+        path.mkdir(
+            parents=True,
+            exist_ok=False
         )
 
+        print(
+            f"✓ Directorio creado: {path.name}"
+        )
+
+    except FileExistsError:
+
+        print(
+            "✗ Ese directorio ya existe."
+        )
+
+    except Exception as error:
+
+        print(
+            f"✗ No se pudo crear: {error}"
+        )
+
+
+# ============================================================
+#                           TOUCH
+# ============================================================
+
+def touch_file(name):
+
+    if not name:
+        print("✗ Debes indicar un nombre.")
+        return
+
+    path = resolve_path(name)
+
+    try:
+
+        path.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        path.touch(
+            exist_ok=False
+        )
+
+        print(
+            f"✓ Archivo creado: {path.name}"
+        )
+
+    except FileExistsError:
+
+        print(
+            "✗ Ese archivo ya existe."
+        )
+
+    except Exception as error:
+
+        print(
+            f"✗ No se pudo crear: {error}"
+        )
+
+
+# ============================================================
+#                         RENAME
+# ============================================================
+
+def rename_item(source, new_name):
+
+    path = get_target_path(source)
+
+    if path is None:
+        return
+
+    if not path.exists():
+        print("✗ El elemento no existe.")
+        return
+
+    if not new_name:
+        print("✗ Debes indicar un nuevo nombre.")
+        return
+
+    destination = path.parent / new_name
+
+    if destination.exists():
+        print("✗ Ya existe un elemento con ese nombre.")
         return
 
     try:
 
-        stat = target.stat()
-
-        print(f"""
-╔══════════════════════════════════════╗
-║          Información                 ║
-╚══════════════════════════════════════╝
-
-Nombre:       {target.name}
-Ruta:         {target}
-Tipo:         {file_type(target)}
-Tamaño:       {format_size(stat.st_size)}
-Permisos:     {oct(stat.st_mode)[-3:]}
-""")
-
-
-    except PermissionError:
+        path.rename(destination)
 
         print(
-            "✗ Permiso denegado."
+            f"✓ Renombrado a: {new_name}"
         )
 
     except Exception as error:
 
         print(
-            f"✗ Error: {error}"
+            f"✗ No se pudo renombrar: {error}"
         )
 
 
 # ============================================================
-#                       LEER ARCHIVO
-# ============================================================
-
-def cat_file(path):
-
-    target = get_path(path)
-
-    if not target.exists():
-
-        print(
-            "✗ El archivo no existe."
-        )
-
-        return
-
-    if not target.is_file():
-
-        print(
-            "✗ No es un archivo."
-        )
-
-        return
-
-    try:
-
-        with target.open(
-            "r",
-            encoding="utf-8",
-            errors="replace"
-        ) as file:
-
-            print()
-            print(
-                file.read()
-            )
-
-    except PermissionError:
-
-        print(
-            "✗ Permiso denegado."
-        )
-
-    except Exception as error:
-
-        print(
-            f"✗ Error: {error}"
-        )
-
-
-# ============================================================
-#                          BUSCAR
+#                          SEARCH
 # ============================================================
 
 def search_files(text):
 
     if not text:
-
-        print(
-            "✗ Debes indicar qué buscar."
-        )
-
+        print("✗ Debes indicar qué buscar.")
         return
-
-    root = Path.cwd()
 
     print()
     print(
-        f"🔎 Buscando '{text}' en {root}"
+        f"🔎 Buscando '{text}' en:"
+    )
+    print(
+        current_dir
     )
     print()
 
@@ -654,332 +667,422 @@ def search_files(text):
 
     try:
 
-        for path in root.rglob("*"):
+        for path in current_dir.rglob("*"):
 
             if text.lower() in path.name.lower():
 
-                print(
-                    path.relative_to(root)
-                )
+                print(path)
 
                 found += 1
 
-    except PermissionError:
+                if found >= 500:
+                    print(
+                        "\nSe alcanzó el límite de 500 resultados."
+                    )
+                    break
 
-        pass
+    except PermissionError:
+        print(
+            "⚠ Se encontraron directorios sin permisos."
+        )
 
     except Exception as error:
-
         print(
-            f"✗ Error: {error}"
+            f"✗ Error durante la búsqueda: {error}"
         )
 
     if found == 0:
-
         print(
             "No se encontraron resultados."
         )
 
-    else:
 
-        print()
+# ============================================================
+#                           INFO
+# ============================================================
+
+def item_info(target):
+
+    path = get_target_path(target)
+
+    if path is None:
+        return
+
+    if not path.exists() and not path.is_symlink():
+        print("✗ El elemento no existe.")
+        return
+
+    try:
+
+        stat = path.stat()
+
+        print(f"""
+╔══════════════════════════════════════════════════════════╗
+║                  Información                            ║
+╚══════════════════════════════════════════════════════════╝
+
+Nombre:       {path.name}
+Ruta:         {path}
+Tipo:         {"Directorio" if path.is_dir() else "Archivo"}
+Tamaño:       {format_size(stat.st_size)}
+Permisos:     {format_permissions(path)}
+""")
+
+
+        if path.is_file():
+
+            print(
+                f"Extensión:    {path.suffix or '(ninguna)'}"
+            )
+
+    except PermissionError:
+        print("✗ Permiso denegado.")
+
+    except Exception as error:
         print(
-            f"✓ {found} resultado(s)."
+            f"✗ Error: {error}"
         )
 
 
 # ============================================================
-#                           APP
+#                           HELP
 # ============================================================
 
-def run():
+def help_command():
 
-    banner()
+    print("""
+LynaFiles 0.4
 
-    while True:
+Navegación:
 
-        try:
+  LS                 Listar archivos
+  CD <ruta>          Entrar en directorio
+  BACK               Volver al directorio anterior
 
-            command = input(
-                f"\nlynafiles [{Path.cwd()}]> "
-            ).strip()
+Archivos:
 
-        except KeyboardInterrupt:
+  OPEN <n>           Abrir archivo
+  INFO <n>           Información
+  SEARCH <texto>     Buscar
 
-            print()
+Operaciones:
 
-            print(
-                "Saliendo de LynaFiles..."
-            )
+  CP <origen> <dest> Copiar
+  MV <origen> <dest> Mover
+  RM <n>              Eliminar
+  RENAME <n> <nombre> Renombrar
 
-            break
+Crear:
 
-        except EOFError:
+  MKDIR <nombre>     Crear directorio
+  TOUCH <nombre>     Crear archivo
 
-            print()
+Sistema:
 
-            break
+  CLEAR              Limpiar pantalla
+  PWD                Mostrar ruta actual
+  HELP               Ayuda
+  Q                  Salir
 
-        if not command:
 
-            continue
+Puedes usar números para seleccionar
+elementos de la lista.
 
-        parts = command.split()
+Ejemplos:
 
-        action = parts[0].upper()
+  LS
+  CD apps
+  CD 1
+  OPEN 2
+  INFO 3
+  CP 1 ../backup
+  MV 2 ../
+  RM 4
+  MKDIR pruebas
+  TOUCH ejemplo.txt
+  RENAME 1 nuevo.txt
+  SEARCH python
+  BACK
+""")
 
-        # ----------------------------------------------------
-        # SALIR
-        # ----------------------------------------------------
 
-        if action in (
-            "Q",
-            "EXIT"
-        ):
+# ============================================================
+#                           PWD
+# ============================================================
 
-            print(
-                "Saliendo de LynaFiles..."
-            )
+def print_working_directory():
 
-            break
+    print(
+        current_dir
+    )
 
-        # ----------------------------------------------------
-        # AYUDA
-        # ----------------------------------------------------
 
-        elif action in (
-            "H",
-            "HELP"
-        ):
+# ============================================================
+#                         PROCESADOR
+# ============================================================
 
-            help_command()
+def process_command(command):
 
-        # ----------------------------------------------------
-        # CLEAR
-        # ----------------------------------------------------
+    global current_dir
 
-        elif action in (
-            "CLEAR",
-            "CLS"
-        ):
+    parts = command.split()
 
-            os.system("clear")
+    if not parts:
+        return True
 
-        # ----------------------------------------------------
-        # LISTAR
-        # ----------------------------------------------------
+    action = parts[0].upper()
 
-        elif action in (
-            "L",
-            "LS"
-        ):
+    # --------------------------------------------------------
+    # SALIR
+    # --------------------------------------------------------
 
-            path = (
-                " ".join(parts[1:])
-                if len(parts) > 1
-                else "."
-            )
+    if action in ("Q", "QUIT", "EXIT"):
 
-            list_directory(path)
+        return False
 
-        # ----------------------------------------------------
-        # CD
-        # ----------------------------------------------------
+    # --------------------------------------------------------
+    # LIST
+    # --------------------------------------------------------
 
-        elif action == "CD":
+    elif action in ("LS", "LIST", "DIR"):
 
-            if len(parts) < 2:
+        list_files()
 
-                print(
-                    "Uso: CD <ruta>"
-                )
+    # --------------------------------------------------------
+    # CD
+    # --------------------------------------------------------
 
-                continue
+    elif action == "CD":
 
-            path = " ".join(parts[1:])
-
-            change_directory(path)
-
-        # ----------------------------------------------------
-        # PWD
-        # ----------------------------------------------------
-
-        elif action == "PWD":
-
-            print(
-                Path.cwd()
-            )
-
-        # ----------------------------------------------------
-        # CREAR ARCHIVO
-        # ----------------------------------------------------
-
-        elif action == "C":
-
-            if len(parts) < 2:
-
-                print(
-                    "Uso: C <archivo>"
-                )
-
-                continue
-
-            path = " ".join(parts[1:])
-
-            create_file(path)
-
-        # ----------------------------------------------------
-        # CREAR DIRECTORIO
-        # ----------------------------------------------------
-
-        elif action == "MK":
-
-            if len(parts) < 2:
-
-                print(
-                    "Uso: MK <carpeta>"
-                )
-
-                continue
-
-            path = " ".join(parts[1:])
-
-            create_directory(path)
-
-        # ----------------------------------------------------
-        # COPIAR
-        # ----------------------------------------------------
-
-        elif action == "CP":
-
-            if len(parts) < 3:
-
-                print(
-                    "Uso: CP <origen> <destino>"
-                )
-
-                continue
-
-            source = parts[1]
-            destination = " ".join(parts[2:])
-
-            copy_item(
-                source,
-                destination
-            )
-
-        # ----------------------------------------------------
-        # MOVER
-        # ----------------------------------------------------
-
-        elif action == "MV":
-
-            if len(parts) < 3:
-
-                print(
-                    "Uso: MV <origen> <destino>"
-                )
-
-                continue
-
-            source = parts[1]
-            destination = " ".join(parts[2:])
-
-            move_item(
-                source,
-                destination
-            )
-
-        # ----------------------------------------------------
-        # ELIMINAR
-        # ----------------------------------------------------
-
-        elif action == "RM":
-
-            if len(parts) < 2:
-
-                print(
-                    "Uso: RM <ruta>"
-                )
-
-                continue
-
-            path = " ".join(parts[1:])
-
-            remove_item(path)
-
-        # ----------------------------------------------------
-        # INFO
-        # ----------------------------------------------------
-
-        elif action == "INFO":
-
-            if len(parts) < 2:
-
-                print(
-                    "Uso: INFO <ruta>"
-                )
-
-                continue
-
-            path = " ".join(parts[1:])
-
-            show_info(path)
-
-        # ----------------------------------------------------
-        # CAT
-        # ----------------------------------------------------
-
-        elif action == "CAT":
-
-            if len(parts) < 2:
-
-                print(
-                    "Uso: CAT <archivo>"
-                )
-
-                continue
-
-            path = " ".join(parts[1:])
-
-            cat_file(path)
-
-        # ----------------------------------------------------
-        # SEARCH
-        # ----------------------------------------------------
-
-        elif action == "SEARCH":
-
-            if len(parts) < 2:
-
-                print(
-                    "Uso: SEARCH <texto>"
-                )
-
-                continue
-
-            text = " ".join(parts[1:])
-
-            search_files(text)
-
-        # ----------------------------------------------------
-        # DESCONOCIDO
-        # ----------------------------------------------------
-
+        if len(parts) < 2:
+            change_directory(str(Path.home()))
         else:
-
-            print(
-                "Comando desconocido."
+            change_directory(
+                " ".join(parts[1:])
             )
 
-            print(
-                "Escribe H para ver la ayuda."
+    # --------------------------------------------------------
+    # BACK
+    # --------------------------------------------------------
+
+    elif action in ("BACK", ".."):
+
+        back_directory()
+
+    # --------------------------------------------------------
+    # OPEN
+    # --------------------------------------------------------
+
+    elif action in ("OPEN", "O"):
+
+        if len(parts) < 2:
+            print("Uso: OPEN <número|ruta>")
+        else:
+            open_file(parts[1])
+
+    # --------------------------------------------------------
+    # COPY
+    # --------------------------------------------------------
+
+    elif action in ("CP", "COPY"):
+
+        if len(parts) < 3:
+            print("Uso: CP <origen> <destino>")
+        else:
+            copy_item(
+                parts[1],
+                " ".join(parts[2:])
             )
+
+    # --------------------------------------------------------
+    # MOVE
+    # --------------------------------------------------------
+
+    elif action in ("MV", "MOVE"):
+
+        if len(parts) < 3:
+            print("Uso: MV <origen> <destino>")
+        else:
+            move_item(
+                parts[1],
+                " ".join(parts[2:])
+            )
+
+    # --------------------------------------------------------
+    # REMOVE
+    # --------------------------------------------------------
+
+    elif action in ("RM", "REMOVE", "DELETE"):
+
+        if len(parts) < 2:
+            print("Uso: RM <número|ruta>")
+        else:
+            remove_item(parts[1])
+
+    # --------------------------------------------------------
+    # MKDIR
+    # --------------------------------------------------------
+
+    elif action in ("MKDIR", "MD"):
+
+        if len(parts) < 2:
+            print("Uso: MKDIR <nombre>")
+        else:
+            make_directory(
+                " ".join(parts[1:])
+            )
+
+    # --------------------------------------------------------
+    # TOUCH
+    # --------------------------------------------------------
+
+    elif action == "TOUCH":
+
+        if len(parts) < 2:
+            print("Uso: TOUCH <nombre>")
+        else:
+            touch_file(
+                " ".join(parts[1:])
+            )
+
+    # --------------------------------------------------------
+    # RENAME
+    # --------------------------------------------------------
+
+    elif action in ("RENAME", "REN"):
+
+        if len(parts) < 3:
+            print(
+                "Uso: RENAME <número|ruta> <nuevo nombre>"
+            )
+        else:
+            rename_item(
+                parts[1],
+                " ".join(parts[2:])
+            )
+
+    # --------------------------------------------------------
+    # SEARCH
+    # --------------------------------------------------------
+
+    elif action in ("SEARCH", "FIND"):
+
+        if len(parts) < 2:
+            print("Uso: SEARCH <texto>")
+        else:
+            search_files(
+                " ".join(parts[1:])
+            )
+
+    # --------------------------------------------------------
+    # INFO
+    # --------------------------------------------------------
+
+    elif action == "INFO":
+
+        if len(parts) < 2:
+            print("Uso: INFO <número|ruta>")
+        else:
+            item_info(parts[1])
+
+    # --------------------------------------------------------
+    # CLEAR
+    # --------------------------------------------------------
+
+    elif action in ("CLEAR", "CLS"):
+
+        clear()
+
+    # --------------------------------------------------------
+    # PWD
+    # --------------------------------------------------------
+
+    elif action == "PWD":
+
+        print_working_directory()
+
+    # --------------------------------------------------------
+    # HELP
+    # --------------------------------------------------------
+
+    elif action in ("H", "HELP", "?"):
+
+        help_command()
+
+    # --------------------------------------------------------
+    # COMANDO DESCONOCIDO
+    # --------------------------------------------------------
+
+    else:
+
+        print(
+            "Comando desconocido."
+        )
+
+        print(
+            "Escribe HELP para ver los comandos."
+        )
+
+    return True
 
 
 # ============================================================
 #                            MAIN
 # ============================================================
 
+def main():
+
+    global current_dir
+
+    current_dir = Path.cwd().resolve()
+
+    clear()
+
+    banner()
+
+    print(
+        f"Ruta inicial: {current_dir}"
+    )
+
+    print(
+        "Escribe HELP para ver los comandos."
+    )
+
+    print()
+
+    while True:
+
+        try:
+
+            command = input(
+                "lynafiles> "
+            ).strip()
+
+            if not process_command(command):
+                break
+
+        except KeyboardInterrupt:
+
+            print()
+            print(
+                "Operación cancelada."
+            )
+
+        except EOFError:
+
+            print()
+            break
+
+        except Exception as error:
+
+            print(
+                f"✗ Error: {error}"
+            )
+
+    print(
+        "\nSaliendo de LynaFiles..."
+    )
+
+
 if __name__ == "__main__":
-    run()
+    main()
