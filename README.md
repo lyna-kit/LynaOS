@@ -4,14 +4,14 @@
 
 Actualmente se encuentra en desarrollo activo. El objetivo es construir un entorno operativo propio, modular y ligero, con sus propias aplicaciones, shell y herramientas de sistema.
 
-## 🚀 LynaOS 0.2
+## 🚀 LynaOS 0.4
 
-**Estado:** Development  
-**Versión:** 0.2  
+**Estado:** Stable  
+**Versión:** 0.4
 **Licencia:** MIT  
 **Plataforma:** Termux / Android
 
-LynaOS 0.2 es la primera versión pública del proyecto.
+LynaOS 0.4 es la cuarta versión pública del proyecto.
 
 ### Características
 
@@ -28,6 +28,18 @@ LynaOS 0.2 es la primera versión pública del proyecto.
 - 👤 Sistema de usuarios
 - 📋 Sistema de versiones y builds
 - 🔄 Sistema inicial de actualización
+- Cómo instalar desde una instalación nueva:
+Si todavía no tienes LynaOS:
+cd ~/LynaOS-Installer
+./installer.sh
+Seleccionas Instalar LynaOS, y después:
+cd ~/LynaOS
+./boot.sh
+🛠️ Si boot.sh no tiene permisos
+Puedes solucionarlo con:
+chmod +x ~/LynaOS/boot.sh
+Y volver a ejecutar:
+~/LynaOS/boot.sh
 
 ## 📂 Estructura
 
