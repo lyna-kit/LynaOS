@@ -7,11 +7,11 @@ from pathlib import Path
 
 
 # ============================================================
-#                         LynaOS 0.3
+#                         LynaOS 0.3.1
 # ============================================================
 
 APP_NAME = "LynaOS"
-VERSION = "0.3"
+VERSION = "0.3.1"
 
 ROOT = Path(__file__).resolve().parent
 APPS_DIR = ROOT / "apps"
@@ -30,6 +30,7 @@ APPLICATIONS = {
     "6": ("Shelly", "shelly", "shelly.py"),
     "7": ("LynaClock", "lynaclock", "lynaclock.py"),
     "8": ("LynaTop", "lynatop", "lynatop.py"),
+    "9": ("Lysh", "lysh", "lysh.py"),
 }
 
 
@@ -43,7 +44,7 @@ def banner():
 
     print("""
 ╔══════════════════════════════════════╗
-║             LynaOS 0.3               ║
+║           LynaOS 0.3.1               ║
 ║       Sistema operativo LynaOS       ║
 ╚══════════════════════════════════════╝
 """)
@@ -87,13 +88,39 @@ def system_info():
 ║          Información LynaOS          ║
 ╚══════════════════════════════════════╝
 
-Sistema:       LynaOS
+Sistema:       {APP_NAME}
 Versión:       {VERSION}
 Directorio:    {ROOT}
 Aplicaciones:  {len(APPLICATIONS)}
 
 Python:        {sys.version.split()[0]}
+
+Nuevas herramientas:
+
+  LynaTop       0.3.1
+  Lysh          0.1
+
+Lysh utiliza Bash de Termux.
+LynaTop funciona sin psutil.
 """)
+
+
+# ============================================================
+#                 COMPROBAR APLICACIÓN
+# ============================================================
+
+def application_exists(
+    directory,
+    filename
+):
+
+    app_path = (
+        APPS_DIR /
+        directory /
+        filename
+    )
+
+    return app_path.exists()
 
 
 # ============================================================
@@ -110,9 +137,15 @@ def launch_application(key):
 
         return
 
-    name, directory, filename = APPLICATIONS[key]
+    name, directory, filename = (
+        APPLICATIONS[key]
+    )
 
-    app_path = APPS_DIR / directory / filename
+    app_path = (
+        APPS_DIR /
+        directory /
+        filename
+    )
 
     if not app_path.exists():
 
@@ -160,12 +193,73 @@ def launch_application(key):
 
 
 # ============================================================
+#                         LYSH
+# ============================================================
+
+def launch_lysh():
+
+    lysh = (
+        APPS_DIR /
+        "lysh" /
+        "lysh.py"
+    )
+
+    if not lysh.exists():
+
+        print()
+        print(
+            "✗ Lysh no está instalado correctamente."
+        )
+
+        print(
+            f"Falta: {lysh}"
+        )
+
+        return
+
+    print()
+    print(
+        "▶ Iniciando Lysh..."
+    )
+    print()
+
+    try:
+
+        subprocess.run(
+            [
+                sys.executable,
+                str(lysh)
+            ]
+        )
+
+    except KeyboardInterrupt:
+
+        print()
+
+    except Exception as error:
+
+        print(
+            f"LynaOS: error iniciando Lysh:"
+        )
+
+        print(error)
+
+    input(
+        "\nPresiona ENTER para volver a LynaOS..."
+    )
+
+
+# ============================================================
 #                       LYNABASH
 # ============================================================
 
 def launch_bash():
 
-    bash = ROOT / "shell" / "lynashell.sh"
+    bash = (
+        ROOT /
+        "shell" /
+        "lynashell.sh"
+    )
 
     if not bash.exists():
 
@@ -176,13 +270,18 @@ def launch_bash():
         return
 
     print()
-    print("▶ Iniciando LynaBash...")
+    print(
+        "▶ Iniciando LynaBash..."
+    )
     print()
 
     try:
 
         subprocess.run(
-            ["bash", str(bash)]
+            [
+                "bash",
+                str(bash)
+            ]
         )
 
     except Exception as error:
@@ -197,7 +296,7 @@ def launch_bash():
 
 
 # ============================================================
-#                         REINICIAR
+#                       REINICIAR
 # ============================================================
 
 def restart():
@@ -221,15 +320,19 @@ def main():
         ).strip()
 
         if not command:
+
             continue
 
         command = command.upper()
 
-        # --------------------------------------------
+        # ----------------------------------------------------
         # SALIR
-        # --------------------------------------------
+        # ----------------------------------------------------
 
-        if command in ("Q", "EXIT"):
+        if command in (
+            "Q",
+            "EXIT"
+        ):
 
             print()
             print(
@@ -238,9 +341,9 @@ def main():
 
             break
 
-        # --------------------------------------------
+        # ----------------------------------------------------
         # INFORMACIÓN
-        # --------------------------------------------
+        # ----------------------------------------------------
 
         elif command == "I":
 
@@ -250,33 +353,43 @@ def main():
                 "\nPresiona ENTER para continuar..."
             )
 
-        # --------------------------------------------
+        # ----------------------------------------------------
         # LYNABASH
-        # --------------------------------------------
+        # ----------------------------------------------------
 
         elif command == "B":
 
             launch_bash()
 
-        # --------------------------------------------
+        # ----------------------------------------------------
         # REINICIAR
-        # --------------------------------------------
+        # ----------------------------------------------------
 
         elif command == "R":
 
             continue
 
-        # --------------------------------------------
+        # ----------------------------------------------------
         # APLICACIONES
-        # --------------------------------------------
+        # ----------------------------------------------------
 
         elif command in APPLICATIONS:
 
-            launch_application(command)
+            launch_application(
+                command
+            )
 
-        # --------------------------------------------
+        # ----------------------------------------------------
+        # LYSH DIRECTO
+        # ----------------------------------------------------
+
+        elif command == "LYSH":
+
+            launch_lysh()
+
+        # ----------------------------------------------------
         # COMANDO DESCONOCIDO
-        # --------------------------------------------
+        # ----------------------------------------------------
 
         else:
 
@@ -295,4 +408,5 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
+
     main()

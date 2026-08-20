@@ -1,26 +1,15 @@
 #!/usr/bin/env python3
 
 import os
-import sys
 import time
 import shutil
-import subprocess
+import signal
 
 
 APP_NAME = "LynaTop"
-APP_VERSION = "0.3"
+APP_VERSION = "0.3.1"
 
 REFRESH_TIME = 2
-
-
-# ============================================================
-#                    COMPROBAR PSUTIL
-# ============================================================
-
-try:
-    import psutil
-except ImportError:
-    psutil = None
 
 
 # ============================================================
@@ -31,7 +20,7 @@ def banner():
 
     print("""
 ╔══════════════════════════════════════════════════════════╗
-║                     LynaTop 0.3                         ║
+║                   LynaTop 0.3.1                         ║
 ║             Monitor de procesos LynaOS                  ║
 ╚══════════════════════════════════════════════════════════╝
 """)
@@ -82,147 +71,407 @@ def terminal_size():
 
 
 # ============================================================
-#                    COMPROBAR DEPENDENCIA
+#                       /PROC
 # ============================================================
 
-def check_psutil():
+def read_file(path):
 
-    if psutil is not None:
-        return True
+    try:
 
-    print("""
-LynaTop necesita la biblioteca psutil.
+        with open(
+            path,
+            "r",
+            encoding="utf-8"
+        ) as file:
 
-Instálala con:
+            return file.read()
 
-  pip install psutil
+    except Exception:
 
-Después vuelve a ejecutar LynaTop.
-""")
-
-    return False
+        return None
 
 
 # ============================================================
-#                    INFORMACIÓN SISTEMA
+#                         CPU
 # ============================================================
 
-def system_stats():
+_previous_cpu = None
 
-    cpu = psutil.cpu_percent(
-        interval=0.2
+
+def cpu_percent():
+
+    global _previous_cpu
+
+    content = read_file(
+        "/proc/stat"
     )
 
-    memory = psutil.virtual_memory()
+    if not content:
+
+        return 0.0
+
+    line = content.splitlines()[0]
+
+    parts = line.split()
+
+    if len(parts) < 5:
+
+        return 0.0
+
+    try:
+
+        values = [
+            int(value)
+            for value in parts[1:]
+        ]
+
+        idle = values[3]
+
+        total = sum(values)
+
+        if _previous_cpu is None:
+
+            _previous_cpu = (
+                total,
+                idle
+            )
+
+            time.sleep(0.1)
+
+            return cpu_percent()
+
+        previous_total, previous_idle = (
+            _previous_cpu
+        )
+
+        _previous_cpu = (
+            total,
+            idle
+        )
+
+        total_delta = (
+            total -
+            previous_total
+        )
+
+        idle_delta = (
+            idle -
+            previous_idle
+        )
+
+        if total_delta <= 0:
+
+            return 0.0
+
+        usage = (
+            1 -
+            idle_delta / total_delta
+        ) * 100
+
+        return max(
+            0.0,
+            min(
+                100.0,
+                usage
+            )
+        )
+
+    except Exception:
+
+        return 0.0
+
+
+# ============================================================
+#                          RAM
+# ============================================================
+
+def memory_stats():
+
+    content = read_file(
+        "/proc/meminfo"
+    )
+
+    if not content:
+
+        return (
+            0,
+            0,
+            0
+        )
+
+    values = {}
+
+    for line in content.splitlines():
+
+        parts = line.split()
+
+        if len(parts) >= 2:
+
+            key = parts[0].rstrip(":")
+
+            try:
+
+                value = int(parts[1])
+
+                if len(parts) >= 3:
+
+                    if parts[2] == "kB":
+
+                        value *= 1024
+
+                values[key] = value
+
+            except ValueError:
+
+                continue
+
+
+    total = values.get(
+        "MemTotal",
+        0
+    )
+
+    available = values.get(
+        "MemAvailable",
+        values.get(
+            "MemFree",
+            0
+        )
+    )
+
+    used = max(
+        0,
+        total - available
+    )
+
+    percent = (
+        (used / total) * 100
+        if total
+        else 0
+    )
+
+    return (
+        used,
+        total,
+        percent
+    )
+
+
+# ============================================================
+#                          LOAD
+# ============================================================
+
+def load_average():
 
     try:
 
         load = os.getloadavg()
 
-        load_text = (
+        return (
             f"{load[0]:.2f} "
             f"{load[1]:.2f} "
             f"{load[2]:.2f}"
         )
 
-    except (AttributeError, OSError):
+    except (
+        AttributeError,
+        OSError
+    ):
 
-        load_text = "N/A"
+        content = read_file(
+            "/proc/loadavg"
+        )
 
-    process_count = len(
-        psutil.pids()
-    )
+        if content:
 
-    return (
-        cpu,
-        memory,
-        load_text,
-        process_count
-    )
+            return " ".join(
+                content.split()[:3]
+            )
+
+        return "N/A"
 
 
 # ============================================================
-#                     PROCESOS
+#                        PROCESOS
 # ============================================================
+
+def process_count():
+
+    try:
+
+        return len([
+            item
+            for item in os.listdir(
+                "/proc"
+            )
+            if item.isdigit()
+        ])
+
+    except Exception:
+
+        return 0
+
 
 def get_processes():
 
     processes = []
 
-    for process in psutil.process_iter(
-        [
-            "pid",
-            "name",
-            "username",
-            "status",
-            "memory_info"
-        ]
-    ):
+    try:
 
-        try:
+        entries = os.listdir(
+            "/proc"
+        )
 
-            info = process.info
+    except Exception:
 
-            memory_info = info.get(
-                "memory_info"
-            )
+        return processes
 
-            rss = (
-                memory_info.rss
-                if memory_info
-                else 0
-            )
 
-            cpu = process.cpu_percent(
-                interval=None
-            )
+    for entry in entries:
 
-            processes.append({
-                "pid": info.get(
-                    "pid",
-                    0
-                ),
-
-                "name": info.get(
-                    "name",
-                    "?"
-                ) or "?",
-
-                "user": info.get(
-                    "username",
-                    "?"
-                ) or "?",
-
-                "status": info.get(
-                    "status",
-                    "?"
-                ) or "?",
-
-                "cpu": cpu,
-
-                "memory": rss
-            })
-
-        except (
-            psutil.NoSuchProcess,
-            psutil.AccessDenied,
-            psutil.ZombieProcess
-        ):
+        if not entry.isdigit():
 
             continue
 
-        except Exception:
+        pid = int(entry)
 
-            continue
+        status_file = (
+            f"/proc/{pid}/status"
+        )
+
+        stat_file = (
+            f"/proc/{pid}/stat"
+        )
+
+
+        name = "?"
+        status = "?"
+        user = "?"
+        memory = 0
+
+
+        # ----------------------------------------------------
+        # STATUS
+        # ----------------------------------------------------
+
+        status_content = read_file(
+            status_file
+        )
+
+        if status_content:
+
+            for line in status_content.splitlines():
+
+                if line.startswith(
+                    "Name:"
+                ):
+
+                    name = line.split(
+                        ":",
+                        1
+                    )[1].strip()
+
+
+                elif line.startswith(
+                    "State:"
+                ):
+
+                    state = line.split(
+                        ":",
+                        1
+                    )[1].strip()
+
+                    if state:
+
+                        status = (
+                            state[0]
+                        )
+
+
+                elif line.startswith(
+                    "VmRSS:"
+                ):
+
+                    parts = line.split()
+
+                    if len(parts) >= 2:
+
+                        try:
+
+                            memory = (
+                                int(parts[1])
+                                * 1024
+                            )
+
+                        except ValueError:
+
+                            pass
+
+
+        # ----------------------------------------------------
+        # CPU
+        # ----------------------------------------------------
+
+        cpu = 0.0
+
+        stat_content = read_file(
+            stat_file
+        )
+
+        if stat_content:
+
+            try:
+
+                parts = stat_content.split()
+
+                utime = int(
+                    parts[13]
+                )
+
+                stime = int(
+                    parts[14]
+                )
+
+                cpu = float(
+                    utime + stime
+                )
+
+            except (
+                IndexError,
+                ValueError
+            ):
+
+                cpu = 0.0
+
+
+        processes.append({
+
+            "pid": pid,
+
+            "name": name,
+
+            "user": user,
+
+            "status": status,
+
+            "cpu": cpu,
+
+            "memory": memory
+
+        })
+
 
     return processes
 
 
 # ============================================================
-#                     MOSTRAR PROCESOS
+#                    MOSTRAR PROCESOS
 # ============================================================
 
-def show_processes(processes, limit):
+def show_processes(
+    processes,
+    limit
+):
 
     processes.sort(
         key=lambda process: (
@@ -232,31 +481,32 @@ def show_processes(processes, limit):
         reverse=True
     )
 
+
     print(
         f"{'PID':>7} "
-        f"{'CPU%':>7} "
+        f"{'CPU':>9} "
         f"{'MEM':>10} "
-        f"{'STATUS':<12} "
-        f"{'USER':<15} "
+        f"{'STATUS':<8} "
         f"NAME"
     )
 
     print(
-        "-" * 80
+        "-" * 65
     )
+
 
     for process in processes[:limit]:
 
-        name = process["name"][:25]
-        user = process["user"][:14]
-        status = process["status"][:11]
+        name = process["name"][:30]
+
+        status = process["status"][:7]
+
 
         print(
             f"{process['pid']:>7} "
-            f"{process['cpu']:>6.1f} "
+            f"{process['cpu']:>8.0f} "
             f"{format_bytes(process['memory']):>10} "
-            f"{status:<12} "
-            f"{user:<15} "
+            f"{status:<8} "
             f"{name}"
         )
 
@@ -269,46 +519,63 @@ def draw():
 
     clear()
 
-    cpu, memory, load, process_count = (
-        system_stats()
+    cpu = cpu_percent()
+
+    used, total, memory_percent = (
+        memory_stats()
     )
 
+    load = load_average()
+
+    processes_count = process_count()
+
+
     width, height = terminal_size()
+
 
     print(
         f"LynaTop {APP_VERSION}"
         f"   CPU: {cpu:5.1f}%"
-        f"   MEM: {memory.percent:5.1f}%"
+        f"   MEM: {memory_percent:5.1f}%"
     )
 
-    print(
-        f"RAM: {format_bytes(memory.used)} / "
-        f"{format_bytes(memory.total)}"
-    )
 
     print(
-        f"Procesos: {process_count}"
+        f"RAM: {format_bytes(used)} / "
+        f"{format_bytes(total)}"
+    )
+
+
+    print(
+        f"Procesos: {processes_count}"
         f"   Load: {load}"
     )
 
+
     print()
 
+
     processes = get_processes()
+
 
     limit = max(
         5,
         height - 10
     )
 
+
     show_processes(
         processes,
         limit
     )
 
+
     print()
+
     print(
-        "Q = salir | R = actualizar | "
-        "K <PID> = terminar proceso"
+        "Q = salir | "
+        "R = actualizar | "
+        "K <PID> = terminar"
     )
 
 
@@ -330,83 +597,99 @@ def kill_process(pid):
 
         return
 
-    try:
 
-        process = psutil.Process(
-            pid
-        )
+    process_path = (
+        f"/proc/{pid}"
+    )
 
-        print()
-        print(
-            f"⚠ Proceso: {process.name()} "
-            f"(PID {pid})"
-        )
 
-        confirmation = input(
-            "¿Terminar proceso? [s/N]: "
-        ).strip().lower()
-
-        if confirmation not in (
-            "s",
-            "si",
-            "sí",
-            "y",
-            "yes"
-        ):
-
-            print(
-                "Operación cancelada."
-            )
-
-            return
-
-        process.terminate()
-
-        try:
-
-            process.wait(
-                timeout=3
-            )
-
-            print(
-                "✓ Proceso terminado."
-            )
-
-        except psutil.TimeoutExpired:
-
-            print(
-                "El proceso no respondió."
-            )
-
-            force = input(
-                "¿Forzar terminación? [s/N]: "
-            ).strip().lower()
-
-            if force in (
-                "s",
-                "si",
-                "sí",
-                "y",
-                "yes"
-            ):
-
-                process.kill()
-
-                print(
-                    "✓ Proceso terminado."
-                )
-
-    except psutil.NoSuchProcess:
+    if not os.path.exists(
+        process_path
+    ):
 
         print(
             "✗ El proceso ya no existe."
         )
 
-    except psutil.AccessDenied:
+        return
+
+
+    name = "?"
+
+    status = read_file(
+        f"/proc/{pid}/status"
+    )
+
+
+    if status:
+
+        for line in status.splitlines():
+
+            if line.startswith(
+                "Name:"
+            ):
+
+                name = line.split(
+                    ":",
+                    1
+                )[1].strip()
+
+                break
+
+
+    print()
+
+    print(
+        f"⚠ Proceso: {name} "
+        f"(PID {pid})"
+    )
+
+
+    confirmation = input(
+        "¿Terminar proceso? [s/N]: "
+    ).strip().lower()
+
+
+    if confirmation not in (
+        "s",
+        "si",
+        "sí",
+        "y",
+        "yes"
+    ):
+
+        print(
+            "Operación cancelada."
+        )
+
+        return
+
+
+    try:
+
+        os.kill(
+            pid,
+            signal.SIGTERM
+        )
+
+        print(
+            "✓ Señal de terminación enviada."
+        )
+
+
+    except ProcessLookupError:
+
+        print(
+            "✗ El proceso ya no existe."
+        )
+
+
+    except PermissionError:
 
         print(
             "✗ Permiso denegado."
         )
+
 
     except Exception as error:
 
@@ -416,13 +699,13 @@ def kill_process(pid):
 
 
 # ============================================================
-#                         AYUDA
+#                          AYUDA
 # ============================================================
 
 def help_command():
 
     print("""
-LynaTop 0.3
+LynaTop 0.3.1
 
 Monitor de procesos de LynaOS.
 
@@ -433,7 +716,10 @@ Comandos:
   H              Ayuda
   Q              Salir
 
-La pantalla se actualiza automáticamente.
+LynaTop no requiere psutil.
+
+Funciona utilizando la interfaz
+/proc de Linux y Android/Termux.
 
 Ejemplo:
 
@@ -447,12 +733,10 @@ Ejemplo:
 
 def run():
 
-    if not check_psutil():
-        return
-
     banner()
 
     time.sleep(1)
+
 
     while True:
 
@@ -460,17 +744,23 @@ def run():
 
             draw()
 
+
             command = input(
                 "\nlynatop> "
             ).strip()
+
 
             if not command:
 
                 continue
 
+
             parts = command.split()
 
-            action = parts[0].upper()
+            action = (
+                parts[0].upper()
+            )
+
 
             if action in (
                 "Q",
@@ -483,12 +773,14 @@ def run():
 
                 break
 
+
             elif action in (
                 "R",
                 "REFRESH"
             ):
 
                 continue
+
 
             elif action in (
                 "H",
@@ -500,6 +792,7 @@ def run():
                 input(
                     "\nENTER para continuar..."
                 )
+
 
             elif action == "K":
 
@@ -515,13 +808,27 @@ def run():
 
                     continue
 
+
                 kill_process(
                     parts[1]
+                )
+
+
+                input(
+                    "\nENTER para continuar..."
+                )
+
+
+            else:
+
+                print(
+                    "Comando desconocido."
                 )
 
                 input(
                     "\nENTER para continuar..."
                 )
+
 
         except KeyboardInterrupt:
 
@@ -529,11 +836,13 @@ def run():
 
             break
 
+
         except EOFError:
 
             print()
 
             break
+
 
         except Exception as error:
 
@@ -549,4 +858,5 @@ def run():
 # ============================================================
 
 if __name__ == "__main__":
+
     run()
